@@ -81,9 +81,7 @@ _PR_JSON = {
 
 
 def test_resolve_pr_current_branch(fake_cli):
-    fields = (
-        "number,title,url,state,isDraft,reviewDecision,statusCheckRollup,headRefName,baseRefName"
-    )
+    fields = gh._PR_VIEW_FIELDS
     fake_cli.set(["gh", "pr", "view", "--json", fields], stdout=json.dumps(_PR_JSON))
     pr = gh.resolve_pr()
     assert pr.number == 7
@@ -95,9 +93,7 @@ def test_resolve_pr_current_branch(fake_cli):
 
 
 def test_resolve_pr_with_explicit_ref(fake_cli):
-    fields = (
-        "number,title,url,state,isDraft,reviewDecision,statusCheckRollup,headRefName,baseRefName"
-    )
+    fields = gh._PR_VIEW_FIELDS
     fake_cli.set(["gh", "pr", "view", "42", "--json", fields], stdout=json.dumps(_PR_JSON))
     pr = gh.resolve_pr("42")
     assert pr.number == 7
@@ -319,16 +315,39 @@ def test_list_gh_accounts(fake_cli):
     ]
 
 
-def test_ensure_gh_account_for_repo_active_already_visible(fake_cli):
+def test_ensure_gh_account_for_repo_no_op_when_already_active(fake_cli):
+    fake_cli.set(["git", "remote", "get-url", "origin"], stdout="git@github.com:vivainio/zithub.git")
     fake_cli.set(
         ["gh", "auth", "status", "--json", "hosts"],
         stdout=json.dumps({"hosts": {"github.com": [{"login": "vivainio", "active": True}]}}),
     )
-    fake_cli.set(["gh", "repo", "view", "--json", "id"], returncode=0)
-    assert gh.ensure_gh_account_for_repo() == "vivainio"
+    assert gh.ensure_gh_account_for_repo() is None
 
 
-def test_ensure_gh_account_for_repo_switches(fake_cli):
+def test_ensure_gh_account_for_repo_switches_by_login_match(fake_cli):
+    fake_cli.set(["git", "remote", "get-url", "origin"], stdout="git@github.com:vivainio/zithub.git")
+    fake_cli.set(
+        ["gh", "auth", "status", "--json", "hosts"],
+        stdout=json.dumps(
+            {
+                "hosts": {
+                    "github.com": [
+                        {"login": "villevai_Basware", "active": True},
+                        {"login": "vivainio", "active": False},
+                    ]
+                }
+            }
+        ),
+    )
+    fake_cli.set(
+        ["gh", "auth", "switch", "--hostname", "github.com", "--user", "vivainio"], returncode=0
+    )
+    notice = gh.ensure_gh_account_for_repo()
+    assert notice == "switched active gh account to vivainio (owner of vivainio's repos)"
+
+
+def test_ensure_gh_account_for_repo_switches_by_org_suffix_match(fake_cli):
+    fake_cli.set(["git", "remote", "get-url", "origin"], stdout="git@github.com:Basware/widgets.git")
     fake_cli.set(
         ["gh", "auth", "status", "--json", "hosts"],
         stdout=json.dumps(
@@ -342,23 +361,26 @@ def test_ensure_gh_account_for_repo_switches(fake_cli):
             }
         ),
     )
-    fake_cli.set(["gh", "repo", "view", "--json", "id"], returncode=1)
     fake_cli.set(
         ["gh", "auth", "switch", "--hostname", "github.com", "--user", "villevai_Basware"],
         returncode=0,
     )
-    fake_cli.set(["gh", "repo", "view", "--json", "id"], returncode=0)
-    assert gh.ensure_gh_account_for_repo() == "villevai_Basware"
+    notice = gh.ensure_gh_account_for_repo()
+    assert notice == "switched active gh account to villevai_Basware (owner of Basware's repos)"
 
 
-def test_ensure_gh_account_for_repo_none_work(fake_cli):
+def test_ensure_gh_account_for_repo_no_matching_account_is_noop(fake_cli):
+    fake_cli.set(["git", "remote", "get-url", "origin"], stdout="git@github.com:someoneelse/widgets.git")
     fake_cli.set(
         ["gh", "auth", "status", "--json", "hosts"],
         stdout=json.dumps({"hosts": {"github.com": [{"login": "vivainio", "active": True}]}}),
     )
-    fake_cli.set(["gh", "repo", "view", "--json", "id"], returncode=1)
-    with pytest.raises(gh.ZithubError, match="no logged-in gh account"):
-        gh.ensure_gh_account_for_repo()
+    assert gh.ensure_gh_account_for_repo() is None
+
+
+def test_ensure_gh_account_for_repo_no_remote_is_noop(fake_cli):
+    fake_cli.fail(["git", "remote", "get-url", "origin"], stderr="no such remote 'origin'")
+    assert gh.ensure_gh_account_for_repo() is None
 
 
 def test_runs_for_commit_filters_by_sha(fake_cli):

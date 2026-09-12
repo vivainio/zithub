@@ -1,4 +1,5 @@
-"""Thin wrappers around the `gh` CLI and its GraphQL API for PR write actions.
+"""Thin wrappers around the `gh` CLI and its GraphQL API for PR and release
+actions gh doesn't already bundle into a single call.
 
 Unlike a status tool, most of these actions delegate straight to `gh`'s own
 subprocess (inheriting stdio) so `gh`'s own flags, prompts, and error
@@ -10,6 +11,7 @@ them.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass, field
 
@@ -44,14 +46,6 @@ def _run_raw(args: list[str]) -> str:
 
 def _run_json(args: list[str]):
     return json.loads(_run(args))
-
-
-def _run_ok(args: list[str]) -> bool:
-    try:
-        result = subprocess.run(args, capture_output=True, text=True, check=False)
-    except FileNotFoundError:
-        return False
-    return result.returncode == 0
 
 
 def run_passthrough(args: list[str]) -> int:
@@ -118,10 +112,11 @@ class PullRequest:
     head_ref_name: str
     base_ref_name: str
     checks: list[CheckRun]
+    body: str = ""
 
 
 _PR_VIEW_FIELDS = (
-    "number,title,url,state,isDraft,reviewDecision,statusCheckRollup,headRefName,baseRefName"
+    "number,title,url,state,isDraft,reviewDecision,statusCheckRollup,headRefName,baseRefName,body"
 )
 
 
@@ -153,6 +148,7 @@ def resolve_pr(ref: str | None = None) -> PullRequest:
         head_ref_name=data["headRefName"],
         base_ref_name=data["baseRefName"],
         checks=checks,
+        body=data.get("body") or "",
     )
 
 
@@ -370,33 +366,58 @@ def list_gh_accounts() -> list[GhAccount]:
     ]
 
 
-def _repo_visible() -> bool:
-    return _run_ok(["gh", "repo", "view", "--json", "id"])
+_REMOTE_OWNER_RE = re.compile(r"[:/]([^/:@]+)/[^/]+/?$")
 
 
-def ensure_gh_account_for_repo() -> str:
-    """The logged-in gh account that can actually see this repo, switching
-    to it if the currently active one can't. Tests real access via `gh repo
-    view` rather than guessing from a login/owner naming convention, so it
-    works for orgs whose name doesn't happen to embed the account's login.
-    Raises ZithubError if no logged-in account can view the repo."""
+def _origin_url() -> str | None:
+    try:
+        return _run(["git", "remote", "get-url", "origin"])
+    except ZithubError:
+        return None
+
+
+def _remote_owner() -> str | None:
+    """The owner segment of origin's "owner/repo" path — same convention
+    wazup uses, so the two tools agree on which account a repo belongs to
+    instead of each guessing differently."""
+    url = _origin_url()
+    if url is None:
+        return None
+    match = _REMOTE_OWNER_RE.search(url)
+    return match.group(1) if match else None
+
+
+def _login_matches_owner(login: str, owner: str) -> bool:
+    if login.lower() == owner.lower():
+        return True
+    # SSO-linked corporate identities are commonly "personalname_OrgName" —
+    # match those against org-owned repos by the part after the underscore.
+    if "_" in login:
+        return login.rsplit("_", 1)[1].lower() == owner.lower()
+    return False
+
+
+def ensure_gh_account_for_repo() -> str | None:
+    """If this repo's owner has a logged-in gh account that isn't active,
+    switch to it. Best-effort, like wazup's version of this same check: any
+    failure (no remote, gh not installed, no matching account) is a silent
+    no-op rather than an error, since this is a convenience, not something
+    that should block a release on its own. Returns a human-readable notice
+    if a switch happened, else None."""
+    owner = _remote_owner()
+    if owner is None:
+        return None
+
     accounts = list_gh_accounts()
-    if not accounts:
-        raise ZithubError("no gh accounts logged in — run `gh auth login`")
+    match = next((a for a in accounts if _login_matches_owner(a.login, owner)), None)
+    if match is None or match.active:
+        return None
 
-    if _repo_visible():
-        active = next((a for a in accounts if a.active), None)
-        return active.login if active else accounts[0].login
-
-    for account in accounts:
-        if account.active:
-            continue
-        _run(["gh", "auth", "switch", "--hostname", "github.com", "--user", account.login])
-        if _repo_visible():
-            return account.login
-
-    tried = ", ".join(a.login for a in accounts)
-    raise ZithubError(f"no logged-in gh account can view this repository (tried: {tried})")
+    try:
+        _run(["gh", "auth", "switch", "--hostname", "github.com", "--user", match.login])
+    except ZithubError:
+        return None
+    return f"switched active gh account to {match.login} (owner of {owner}'s repos)"
 
 
 @dataclass

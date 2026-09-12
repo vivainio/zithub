@@ -1,15 +1,17 @@
 # zithub
 
-`zh` — batched `gh` PR actions for AI agents, for the two things plain `gh`
-can't already do in a single call: acting on PR review-comment threads (no
-`gh` subcommand exists for these at all), and merging with a real preflight
+`zh` — batched `gh` PR and release actions for AI agents, for what plain
+`gh` can't already do in a single call: acting on PR review-comment threads
+(no `gh` subcommand exists for these at all), merging with a real preflight
 (draft/review-decision/unresolved-threads/CI, checked and merged in one
-call instead of chained separately). Where
+call instead of chained separately), and release preflight/creation. Where
 [wazup](https://github.com/vivainio/wazup) is the read-only "what's up with
-this repo" status tool, `zh` is this narrower write-side complement — it
-deliberately does *not* wrap `gh pr create/close/comment/review/edit`,
-since those are already one `gh` call each and an agent that already knows
-`gh` gains nothing from a second name for the same thing.
+this repo" status tool, `zh` is its narrower complement, covering the
+specific PR/release actions wazup doesn't — some read-only (`pr threads`,
+`pr check`), most mutating (`pr reply`/`resolve`, `pr merge`, `release
+create`). It deliberately does *not* wrap `gh pr create/close/comment/
+review/edit`, since those are already one `gh` call each and an agent that
+already knows `gh` gains nothing from a second name for the same thing.
 
 Requires the [GitHub CLI](https://cli.github.com/) (`gh`) installed and
 authenticated (`gh auth login`).
@@ -55,10 +57,11 @@ zh pr merge --force          # skip the preflight and merge immediately
 zh pr merge --method rebase --keep-branch
 ```
 
-`zh release` (bare, or `patch`/`minor`/`major`) ports the checks from the
-`github-release` skill's `preflight.py` — the right gh account is active
-(tested by actually trying to view the repo, not by guessing from a
-login/owner naming convention), the current branch matches the release
+`zh release` (bare, or `patch`/`minor`/`major`) checks: the active gh
+account matches the repo's owner (same convention `wazup` uses — a
+logged-in account whose login, or the org half of a `name_OrgName`
+corporate-SSO login, matches origin's owner; best-effort and never blocks
+the release if nothing matches), the current branch matches the release
 target, local HEAD matches `origin/<target>` exactly, and CI is green on
 that exact commit (falling back to the branch's latest runs if no run
 exists yet for the commit, and proceeding on judgement if none exist at

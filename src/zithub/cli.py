@@ -337,12 +337,11 @@ def _release_preflight(target_arg: str | None) -> tuple[str, str, list[gh.Releas
         print(f"error: {exc}", file=sys.stderr)
         return None
 
-    try:
-        account = gh.ensure_gh_account_for_repo()
-        print(f"auth   {account}")
-    except gh.ZithubError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return None
+    notice = gh.ensure_gh_account_for_repo()
+    if notice:
+        print(_dim(notice))
+    active = next((a for a in gh.list_gh_accounts() if a.active), None)
+    print(f"auth   {active.login if active else '?'}")
 
     try:
         repo = gh.repo_info()
@@ -613,7 +612,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="zh", description="batched gh PR actions for AI agents"
     )
     sub = parser.add_subparsers(dest="command")
-    pr = sub.add_parser("pr", help="PR write actions")
+    pr = sub.add_parser("pr", help="PR actions gh doesn't already do in one call")
     pr_sub = pr.add_subparsers(dest="pr_command", required=True)
 
     p_threads = pr_sub.add_parser(

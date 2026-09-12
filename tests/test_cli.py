@@ -10,7 +10,7 @@ from zithub import gh
 from zithub.cli import build_parser
 
 _PR_FIELDS = (
-    "number,title,url,state,isDraft,reviewDecision,statusCheckRollup,headRefName,baseRefName"
+    "number,title,url,state,isDraft,reviewDecision,statusCheckRollup,headRefName,baseRefName,body"
 )
 
 
@@ -361,11 +361,11 @@ _RUN_LIST_FIELDS = "databaseId,name,status,conclusion,url,headSha,createdAt"
 
 def set_preflight_up_to_ci(fake_cli, branch="main", sha="abc123", dirty=""):
     fake_cli.set(["git", "rev-parse", "--abbrev-ref", "HEAD"], stdout=branch)
+    fake_cli.set(["git", "remote", "get-url", "origin"], stdout="git@github.com:acme/widgets.git")
     fake_cli.set(
         ["gh", "auth", "status", "--json", "hosts"],
         stdout=json.dumps({"hosts": {"github.com": [{"login": "vivainio", "active": True}]}}),
     )
-    fake_cli.set(["gh", "repo", "view", "--json", "id"], returncode=0)
     fake_cli.set(
         ["gh", "repo", "view", "--json", "owner,name,nameWithOwner,url,defaultBranchRef"],
         stdout=repo_json(),
