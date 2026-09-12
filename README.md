@@ -48,17 +48,25 @@ zh pr reply T_kwDOA... -b "fixed in a1b2c3d" --resolve
 zh pr resolve --all --path src/     # resolve every unresolved thread under src/
 ```
 
-`zh pr check` surfaces the two things you'd otherwise have to open the PR
-on the web to eyeball: the base branch it's targeting (no judgment — just
-shown, since only you know whether it's the wrong one), and whether the
-title/body references a ticket at all — a GitHub issue ref (`#123`,
-`Fixes #123`), any URL (covers a Jira/Linear/etc. link), or a bare
-Jira-style key (`ABC-123`, flagged with a suggestion to link it directly).
-Exits non-zero if no reference is found at all:
+`zh pr check` surfaces what you'd otherwise have to open the PR on the web
+(or find a local clone) to see: the base branch it's targeting (no
+judgment — just shown, since only you know whether it's the wrong one),
+its local checkout if `zh repos` has seen one for that branch — warning if
+that checkout is dirty, since switching branches or pulling there would be
+risky — and whether the title/body references a ticket at all: a GitHub
+issue ref (`#123`, `Fixes #123`), any URL (covers a Jira/Linear/etc. link),
+or a bare Jira-style key (`ABC-123`, flagged with a suggestion to link it
+directly). Exits non-zero if no ticket reference is found.
+
+Typically called with one or more PR URLs directly (an owner/repo parsed
+right out of the URL, so it works from anywhere — not just a checkout of
+that repo), rather than a bare number, which only resolves against the
+current directory's repo:
 
 ```
-zh pr check
-zh pr check 42
+zh pr check                                          # current branch's PR
+zh pr check https://github.com/acme/widgets/pull/42
+zh pr check https://github.com/.../pull/42 https://github.com/.../pull/43   # a summary block per PR
 ```
 
 `zh pr merge` (and `zh pr ship`, which is the same thing with

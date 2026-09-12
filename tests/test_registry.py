@@ -1,18 +1,12 @@
 """Unit tests for the local checkout registry (no subprocess boundary
-involved — pure filesystem/JSONL, isolated to a temp XDG_DATA_HOME)."""
+involved — pure filesystem/JSONL; isolated from the real registry via the
+autouse `_isolate_registry` fixture in conftest.py)."""
 
 from __future__ import annotations
 
 import json
 
-import pytest
-
 from zithub import registry
-
-
-@pytest.fixture(autouse=True)
-def _isolate_registry(tmp_path, monkeypatch):
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))
 
 
 def test_empty_registry_lists_nothing():

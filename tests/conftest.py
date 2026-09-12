@@ -56,3 +56,11 @@ def fake_cli(monkeypatch: pytest.MonkeyPatch) -> FakeCli:
     fake = FakeCli()
     monkeypatch.setattr(subprocess, "run", fake)
     return fake
+
+
+@pytest.fixture(autouse=True)
+def _isolate_registry(tmp_path, monkeypatch):
+    """zithub.registry reads/writes under XDG_DATA_HOME -- point every test
+    at an empty temp dir so none of them see (or pollute) this machine's
+    real ~/.local/share/zithub/repos.jsonl."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))

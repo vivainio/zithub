@@ -357,6 +357,7 @@ def test_merge_force_skips_preflight(fake_cli):
 # check — target branch + ticket reference
 
 def test_check_shows_target_and_found_ticket(fake_cli, capsys):
+    fake_cli.fail(["git", "remote", "get-url", "origin"], stderr="not a git repository")
     fake_cli.set(
         ["gh", "pr", "view", "--json", _PR_FIELDS],
         stdout=pr_json(title="Fix widget rendering", body="Fixes #42"),
@@ -366,9 +367,11 @@ def test_check_shows_target_and_found_ticket(fake_cli, capsys):
     assert rc == 0
     assert "target main  <- feature" in out
     assert "ticket" in out and "#42" in out
+    assert "no known checkout" in out
 
 
 def test_check_fails_when_no_ticket_reference(fake_cli, capsys):
+    fake_cli.fail(["git", "remote", "get-url", "origin"], stderr="not a git repository")
     fake_cli.set(
         ["gh", "pr", "view", "--json", _PR_FIELDS],
         stdout=pr_json(title="Fix widget rendering", body="no ticket mentioned here"),
@@ -380,6 +383,7 @@ def test_check_fails_when_no_ticket_reference(fake_cli, capsys):
 
 
 def test_check_notes_unlinked_jira_key(fake_cli, capsys):
+    fake_cli.fail(["git", "remote", "get-url", "origin"], stderr="not a git repository")
     fake_cli.set(
         ["gh", "pr", "view", "--json", _PR_FIELDS],
         stdout=pr_json(title="Fix widget rendering", body="Implements ABC-123"),
@@ -389,6 +393,86 @@ def test_check_notes_unlinked_jira_key(fake_cli, capsys):
     assert rc == 0
     assert "ABC-123" in out
     assert "consider linking" in out
+
+
+def test_check_shows_local_checkout_when_registered(fake_cli, capsys, tmp_path):
+    from zithub import registry
+
+    checkout = tmp_path / "widgets-checkout"
+    checkout.mkdir()
+    fake_cli.set(["git", "remote", "get-url", "origin"], stdout="git@github.com:acme/widgets.git")
+    fake_cli.set(
+        ["gh", "pr", "view", "--json", _PR_FIELDS],
+        stdout=pr_json(title="Fix widget rendering", body="Fixes #42", headRefName="feature"),
+    )
+    registry.record_seen(str(checkout), "acme/widgets", "feature")
+    fake_cli.set(["git", "-C", str(checkout), "status", "--short"], stdout="")
+
+    rc = run(["pr", "check"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert f"local  {checkout}" in out
+    assert "dirty" not in out
+    assert "no known checkout" not in out
+
+
+def test_check_warns_when_local_checkout_dirty(fake_cli, capsys, tmp_path):
+    from zithub import registry
+
+    checkout = tmp_path / "widgets-checkout"
+    checkout.mkdir()
+    fake_cli.set(["git", "remote", "get-url", "origin"], stdout="git@github.com:acme/widgets.git")
+    fake_cli.set(
+        ["gh", "pr", "view", "--json", _PR_FIELDS],
+        stdout=pr_json(title="Fix widget rendering", body="Fixes #42", headRefName="feature"),
+    )
+    registry.record_seen(str(checkout), "acme/widgets", "feature")
+    fake_cli.set(["git", "-C", str(checkout), "status", "--short"], stdout=" M some_file.py\n")
+
+    rc = run(["pr", "check"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "dirty" in out
+    assert "1 uncommitted change" in out
+
+
+def test_check_parses_repo_from_pr_url(fake_cli, capsys, tmp_path):
+    """A full PR URL's owner/repo is parsed directly, without needing the
+    current directory to be a checkout of that repo at all."""
+    from zithub import registry
+
+    checkout = tmp_path / "widgets-checkout"
+    checkout.mkdir()
+    registry.record_seen(str(checkout), "acme/widgets", "feature")
+    fake_cli.set(
+        ["gh", "pr", "view", "https://github.com/acme/widgets/pull/7", "--json", _PR_FIELDS],
+        stdout=pr_json(title="Fix widget rendering", body="Fixes #42", headRefName="feature"),
+    )
+    fake_cli.set(["git", "-C", str(checkout), "status", "--short"], stdout="")
+
+    rc = run(["pr", "check", "https://github.com/acme/widgets/pull/7"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert f"local  {checkout}" in out
+    assert not any(c == ["git", "remote", "get-url", "origin"] for c in fake_cli.calls)
+
+
+def test_check_multiple_prs_reports_each_and_aggregates_failure(fake_cli, capsys):
+    fake_cli.fail(["git", "remote", "get-url", "origin"], stderr="not a git repository")
+    fake_cli.set(
+        ["gh", "pr", "view", "1", "--json", _PR_FIELDS],
+        stdout=pr_json(number=1, title="Fix A", body="Fixes #1"),
+    )
+    fake_cli.set(
+        ["gh", "pr", "view", "2", "--json", _PR_FIELDS],
+        stdout=pr_json(number=2, title="Fix B", body="no ticket here"),
+    )
+    rc = run(["pr", "check", "1", "2"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "#1 Fix A" in out
+    assert "#2 Fix B" in out
+    assert "no reference found" in out
 
 
 # ---------------------------------------------------------------------------

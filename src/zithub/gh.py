@@ -337,6 +337,24 @@ def remote_name_with_owner() -> str | None:
     return f"{parts[-2]}/{parts[-1]}"
 
 
+_PR_URL_RE = re.compile(r"github\.com[:/]([^/]+)/([^/]+)/pull/\d+")
+
+
+def repo_for_ref(ref: str | None) -> str | None:
+    """"owner/repo" for a PR ref, without needing a `gh` call. `zh pr check`
+    is typically passed a full PR URL and run from wherever the agent
+    already is, not necessarily a checkout of that repo — so a URL's
+    owner/repo is parsed directly from it rather than assumed to be the
+    current directory's. Falls back to the current directory's remote for
+    a bare number/branch ref (or no ref at all), which has no repo of its
+    own to parse."""
+    if ref:
+        match = _PR_URL_RE.search(ref)
+        if match:
+            return f"{match.group(1)}/{match.group(2)}"
+    return remote_name_with_owner()
+
+
 def fetch_all() -> None:
     _run(["git", "fetch", "origin", "--prune", "--tags"])
 
@@ -348,11 +366,15 @@ def remote_branch_sha(branch: str) -> str | None:
         return None
 
 
-def dirty_files() -> list[str]:
-    """Uncommitted changes (tracked or untracked) that won't be part of the
-    release since the release tag points at HEAD. `uv.lock` is excluded —
-    it's routinely rewritten by tooling and not worth flagging every time."""
-    lines = _run_raw(["git", "status", "--short"]).splitlines()
+def dirty_files(path: str | None = None) -> list[str]:
+    """Uncommitted changes (tracked or untracked) in `path` (default: cwd) —
+    for a release, ones that won't be part of it since the release tag
+    points at HEAD; for another checkout (e.g. one `pr check` found in the
+    registry), a heads-up before an agent switches branches or pulls there.
+    `uv.lock` is excluded — it's routinely rewritten by tooling and not
+    worth flagging every time."""
+    cmd = ["git", *(["-C", path] if path else []), "status", "--short"]
+    lines = _run_raw(cmd).splitlines()
     return [line for line in lines if line[3:].strip() not in _DIRTY_IGNORE]
 
 

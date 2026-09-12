@@ -137,16 +137,42 @@ def cmd_unresolve(args: argparse.Namespace) -> int:
 # whether it references a ticket, both otherwise only visible by opening
 # the PR on the web
 
-def cmd_check(args: argparse.Namespace) -> int:
+def _local_checkout_for(repo_name: str | None, branch: str) -> registry.RepoEntry | None:
+    if not repo_name:
+        return None
+    return next(
+        (e for e in registry.list_seen() if e.repo == repo_name and e.branch == branch), None
+    )
+
+
+def _check_one(ref: str | None) -> bool:
+    """Prints one PR's summary block: target branch, its local checkout (if
+    any, from the `zh repos` registry) and whether that checkout is dirty,
+    and whether it references a ticket. Returns whether it passed (a ticket
+    reference was found) — a dirty local checkout only warns."""
     try:
-        pr = gh.resolve_pr(args.ref)
+        pr = gh.resolve_pr(ref)
     except gh.ZithubError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return False
 
     print(f"pr     #{pr.number} {pr.title}")
     print(f"       {pr.url}")
     print(f"target {pr.base_ref_name}  <- {pr.head_ref_name}")
+
+    checkout = _local_checkout_for(gh.repo_for_ref(ref), pr.head_ref_name)
+    if checkout is None:
+        print(_dim(f"local  no known checkout of {pr.head_ref_name} — see `zh repos`"))
+    else:
+        print(f"local  {_dim(_display_path(checkout.path))}")
+        dirty = gh.dirty_files(checkout.path)
+        if dirty:
+            print(
+                _yellow(
+                    f"       dirty — {len(dirty)} uncommitted change(s); "
+                    "be careful switching branches or pulling there"
+                )
+            )
 
     result = ticket.check_ticket_reference(f"{pr.title}\n{pr.body}")
     if not result.found:
@@ -156,12 +182,22 @@ def cmd_check(args: argparse.Namespace) -> int:
                 "ref (#123), a tracker URL, or a ticket key"
             )
         )
-        return 1
+        return False
 
     print(f"ticket {_green(f'{result.kind}: {result.detail}')}")
     if result.note:
         print(f"       {_yellow(result.note)}")
-    return 0
+    return True
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    refs: list[str | None] = args.ref or [None]
+    all_ok = True
+    for i, ref in enumerate(refs):
+        if i > 0:
+            print()
+        all_ok = _check_one(ref) and all_ok
+    return 0 if all_ok else 1
 
 
 # ---------------------------------------------------------------------------
@@ -735,9 +771,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_unresolve.set_defaults(func=cmd_unresolve)
 
     p_check = pr_sub.add_parser(
-        "check", help="surface the target branch and check for a linked ticket"
+        "check",
+        help="target branch, local checkout, and ticket reference — for one PR or several",
     )
-    _add_ref_arg(p_check)
+    p_check.add_argument(
+        "ref",
+        nargs="*",
+        help="PR number(s), URL(s), or branch(es) (default: current branch's PR)",
+    )
     p_check.set_defaults(func=cmd_check)
 
     p_merge = pr_sub.add_parser(
