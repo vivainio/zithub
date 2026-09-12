@@ -265,3 +265,131 @@ def test_reply_to_thread(fake_cli):
     )
     url = gh.reply_to_thread("T_1", "done")
     assert url == "https://github.com/acme/widgets/pull/7#comment"
+
+
+# ---------------------------------------------------------------------------
+# release preflight plumbing
+
+def test_current_branch(fake_cli):
+    fake_cli.set(["git", "rev-parse", "--abbrev-ref", "HEAD"], stdout="main\n")
+    assert gh.current_branch() == "main"
+
+
+def test_remote_branch_sha_missing(fake_cli):
+    fake_cli.fail(["git", "rev-parse", "origin/main"], stderr="unknown revision")
+    assert gh.remote_branch_sha("main") is None
+
+
+def test_remote_branch_sha_found(fake_cli):
+    fake_cli.set(["git", "rev-parse", "origin/main"], stdout="abc123\n")
+    assert gh.remote_branch_sha("main") == "abc123"
+
+
+def test_dirty_files_excludes_uv_lock(fake_cli):
+    fake_cli.set(
+        ["git", "status", "--short"],
+        stdout=" M uv.lock\n M src/zithub/cli.py\n?? scratch.txt\n",
+    )
+    assert gh.dirty_files() == [" M src/zithub/cli.py", "?? scratch.txt"]
+
+
+def test_dirty_files_clean(fake_cli):
+    fake_cli.set(["git", "status", "--short"], stdout="")
+    assert gh.dirty_files() == []
+
+
+def test_list_gh_accounts(fake_cli):
+    fake_cli.set(
+        ["gh", "auth", "status", "--json", "hosts"],
+        stdout=json.dumps(
+            {
+                "hosts": {
+                    "github.com": [
+                        {"login": "vivainio", "active": True},
+                        {"login": "villevai_Basware", "active": False},
+                    ]
+                }
+            }
+        ),
+    )
+    accounts = gh.list_gh_accounts()
+    assert [(a.login, a.active) for a in accounts] == [
+        ("vivainio", True),
+        ("villevai_Basware", False),
+    ]
+
+
+def test_ensure_gh_account_for_repo_active_already_visible(fake_cli):
+    fake_cli.set(
+        ["gh", "auth", "status", "--json", "hosts"],
+        stdout=json.dumps({"hosts": {"github.com": [{"login": "vivainio", "active": True}]}}),
+    )
+    fake_cli.set(["gh", "repo", "view", "--json", "id"], returncode=0)
+    assert gh.ensure_gh_account_for_repo() == "vivainio"
+
+
+def test_ensure_gh_account_for_repo_switches(fake_cli):
+    fake_cli.set(
+        ["gh", "auth", "status", "--json", "hosts"],
+        stdout=json.dumps(
+            {
+                "hosts": {
+                    "github.com": [
+                        {"login": "vivainio", "active": True},
+                        {"login": "villevai_Basware", "active": False},
+                    ]
+                }
+            }
+        ),
+    )
+    fake_cli.set(["gh", "repo", "view", "--json", "id"], returncode=1)
+    fake_cli.set(
+        ["gh", "auth", "switch", "--hostname", "github.com", "--user", "villevai_Basware"],
+        returncode=0,
+    )
+    fake_cli.set(["gh", "repo", "view", "--json", "id"], returncode=0)
+    assert gh.ensure_gh_account_for_repo() == "villevai_Basware"
+
+
+def test_ensure_gh_account_for_repo_none_work(fake_cli):
+    fake_cli.set(
+        ["gh", "auth", "status", "--json", "hosts"],
+        stdout=json.dumps({"hosts": {"github.com": [{"login": "vivainio", "active": True}]}}),
+    )
+    fake_cli.set(["gh", "repo", "view", "--json", "id"], returncode=1)
+    with pytest.raises(gh.ZithubError, match="no logged-in gh account"):
+        gh.ensure_gh_account_for_repo()
+
+
+def test_runs_for_commit_filters_by_sha(fake_cli):
+    fake_cli.set(
+        ["gh", "run", "list", "--commit", "abc123", "--limit", "100", "--json", gh._RUN_LIST_FIELDS],
+        stdout=json.dumps(
+            [
+                {"databaseId": 1, "name": "build", "status": "completed", "conclusion": "success", "url": "u1", "headSha": "abc123"},
+                {"databaseId": 2, "name": "stale", "status": "completed", "conclusion": "success", "url": "u2", "headSha": "def456"},
+            ]
+        ),
+    )
+    runs = gh.runs_for_commit("abc123")
+    assert [r.name for r in runs] == ["build"]
+
+
+def test_create_release_builds_command(fake_cli):
+    fake_cli.set(
+        [
+            "gh",
+            "release",
+            "create",
+            "v1.0.0",
+            "--notes",
+            "notes here",
+            "--title",
+            "v1.0.0",
+            "--target",
+            "main",
+        ],
+        stdout="https://github.com/acme/widgets/releases/tag/v1.0.0",
+    )
+    url = gh.create_release(tag="v1.0.0", notes="notes here", title="v1.0.0", target="main")
+    assert url == "https://github.com/acme/widgets/releases/tag/v1.0.0"

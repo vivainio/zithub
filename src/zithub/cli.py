@@ -1,6 +1,8 @@
-"""zh: batched `gh` PR actions for AI agents — merge preflight, review-thread
-reply/resolve, and the rest of the PR write-side, each as one call instead
-of several chained `gh`/API calls."""
+"""zh: batched `gh` PR/release actions for AI agents — PR merge preflight,
+review-thread reply/resolve, and release preflight/create, each as one call
+instead of several chained `gh`/API calls. Actions `gh` already does in a
+single call (create, close, comment, review, label, reviewer) are left to
+`gh` itself."""
 
 from __future__ import annotations
 
@@ -41,102 +43,6 @@ def _add_ref_arg(p: argparse.ArgumentParser) -> None:
 
 def _gh_ref_args(args: argparse.Namespace) -> list[str]:
     return [args.ref] if args.ref else []
-
-
-# ---------------------------------------------------------------------------
-# thin passthroughs — gh already does these in one call; zh just gives them a
-# uniform `pr` verb and lets `zh` be the only CLI surface an agent needs
-
-def cmd_create(args: argparse.Namespace) -> int:
-    cmd = ["gh", "pr", "create"]
-    if args.title:
-        cmd += ["--title", args.title]
-    if args.body:
-        cmd += ["--body", args.body]
-    if args.body_file:
-        cmd += ["--body-file", args.body_file]
-    if args.base:
-        cmd += ["--base", args.base]
-    if args.head:
-        cmd += ["--head", args.head]
-    if args.draft:
-        cmd.append("--draft")
-    if args.fill:
-        cmd.append("--fill")
-    for label in args.label or []:
-        cmd += ["--label", label]
-    for reviewer in args.reviewer or []:
-        cmd += ["--reviewer", reviewer]
-    for assignee in args.assignee or []:
-        cmd += ["--assignee", assignee]
-    if args.milestone:
-        cmd += ["--milestone", args.milestone]
-    if args.web:
-        cmd.append("--web")
-    return gh.run_passthrough(cmd)
-
-
-def cmd_close(args: argparse.Namespace) -> int:
-    cmd = ["gh", "pr", "close", *_gh_ref_args(args)]
-    if args.comment:
-        cmd += ["--comment", args.comment]
-    if args.delete_branch:
-        cmd.append("--delete-branch")
-    return gh.run_passthrough(cmd)
-
-
-def cmd_comment(args: argparse.Namespace) -> int:
-    cmd = ["gh", "pr", "comment", *_gh_ref_args(args)]
-    if args.body:
-        cmd += ["--body", args.body]
-    if args.body_file:
-        cmd += ["--body-file", args.body_file]
-    if args.edit_last:
-        cmd.append("--edit-last")
-    if args.delete_last:
-        cmd.append("--delete-last")
-    if args.create_if_none:
-        cmd.append("--create-if-none")
-    return gh.run_passthrough(cmd)
-
-
-def cmd_review(args: argparse.Namespace) -> int:
-    cmd = ["gh", "pr", "review", *_gh_ref_args(args)]
-    if args.approve:
-        cmd.append("--approve")
-    elif args.request_changes:
-        cmd.append("--request-changes")
-    else:
-        cmd.append("--comment")
-    if args.body:
-        cmd += ["--body", args.body]
-    if args.body_file:
-        cmd += ["--body-file", args.body_file]
-    return gh.run_passthrough(cmd)
-
-
-def cmd_label(args: argparse.Namespace) -> int:
-    if not args.add and not args.remove:
-        print("error: pass --add and/or --remove", file=sys.stderr)
-        return 1
-    cmd = ["gh", "pr", "edit", *_gh_ref_args(args)]
-    for name in args.add or []:
-        cmd += ["--add-label", name]
-    for name in args.remove or []:
-        cmd += ["--remove-label", name]
-    return gh.run_passthrough(cmd)
-
-
-def cmd_reviewer(args: argparse.Namespace) -> int:
-    if not args.add and not args.remove:
-        print("error: pass --add and/or --remove", file=sys.stderr)
-        return 1
-    cmd = ["gh", "pr", "edit", *_gh_ref_args(args)]
-    for login in args.add or []:
-        cmd += ["--add-reviewer", login]
-    for login in args.remove or []:
-        cmd += ["--remove-reviewer", login]
-    return gh.run_passthrough(cmd)
 
 
 # ---------------------------------------------------------------------------
@@ -350,6 +256,199 @@ def _add_merge_args(p: argparse.ArgumentParser, default_delete_branch: bool) -> 
     p.set_defaults(func=cmd_merge)
 
 
+# ---------------------------------------------------------------------------
+# release preflight / create — ports the github-release skill's preflight.py
+# (gh auth, target branch, remote sync, CI) so `release create` can gate on
+# it directly: one call that checks readiness and creates the release,
+# instead of a separate preflight script plus a hand-typed `gh release
+# create`.
+
+_CI_QUICK_ATTEMPTS = 5
+_CI_QUICK_INTERVAL_SECONDS = 1
+_CI_POLL_INTERVAL_SECONDS = 20
+_CI_MAX_ATTEMPTS = 30
+
+
+def _print_run_failures(runs: list[gh.WorkflowRun]) -> None:
+    for r in runs:
+        print(f"       {_red(r.name)}={r.conclusion}  {r.url}")
+        tail = gh.run_failure_log(r.database_id)
+        if tail:
+            print(_dim(f"       ── {r.name} (log tail) ──"))
+            for line in tail.splitlines():
+                print(f"       {_dim('|')} {line}")
+
+
+def _wait_for_release_ci(sha: str, branch: str) -> bool:
+    """True if CI passed (or no CI exists at all — proceed on judgement),
+    False if it failed or never completed. Mirrors the github-release
+    skill's preflight polling: a short grace period for the run to appear,
+    then a longer poll while anything is still in progress."""
+    runs: list[gh.WorkflowRun] = []
+    for attempt in range(_CI_MAX_ATTEMPTS):
+        runs = gh.runs_for_commit(sha)
+        if not runs:
+            if attempt >= _CI_QUICK_ATTEMPTS:
+                break
+            time.sleep(_CI_QUICK_INTERVAL_SECONDS)
+            continue
+        pending = [r for r in runs if r.status != "completed"]
+        if not pending:
+            break
+        names = ", ".join(f"{r.name}={r.status}" for r in runs)
+        print(_dim(f"       waiting on CI: {names}"))
+        time.sleep(_CI_POLL_INTERVAL_SECONDS)
+
+    if not runs:
+        latest = gh.latest_runs_for_branch(branch, limit=5)
+        failed = [r for r in latest if r.status == "completed" and r.conclusion != "success"]
+        if failed:
+            print(f"ci     {_red('no run for this commit; latest ' + branch + ' runs failed')}")
+            _print_run_failures(failed)
+            return False
+        print(_dim("ci     no run found for this commit — proceed with judgement"))
+        return True
+
+    pending = [r for r in runs if r.status != "completed"]
+    if pending:
+        names = ", ".join(f"{r.name}={r.status}" for r in pending)
+        print(f"error: CI did not complete on {sha[:12]}: {names}", file=sys.stderr)
+        return False
+
+    failed = [r for r in runs if r.conclusion != "success"]
+    if failed:
+        print(f"ci     {_red('failed')}", file=sys.stderr)
+        _print_run_failures(failed)
+        return False
+
+    names = ", ".join(r.name for r in runs)
+    print(f"ci     {_green('success')} ({names})")
+    return True
+
+
+def _release_preflight(target_arg: str | None) -> tuple[str, str] | None:
+    """Runs every preflight check, printing progress as it goes. Returns
+    (target_branch, head_sha) on pass, None on failure (the specific check
+    that failed has already printed its own error)."""
+    try:
+        branch = gh.current_branch()
+    except gh.ZithubError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return None
+
+    try:
+        account = gh.ensure_gh_account_for_repo()
+        print(f"auth   {account}")
+    except gh.ZithubError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return None
+
+    try:
+        repo = gh.repo_info()
+    except gh.ZithubError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return None
+
+    target = target_arg or repo.default_branch
+    if branch != target:
+        override = "" if target_arg else f" or rerun with `--target {branch}`"
+        print(
+            f"error: current branch is '{branch}', but release target is "
+            f"'{target}'; check out '{target}'{override}",
+            file=sys.stderr,
+        )
+        return None
+    print(f"branch {branch}  (release target)")
+
+    try:
+        releases = gh.recent_releases()
+    except gh.ZithubError:
+        releases = []
+    if releases:
+        print("releases")
+        for r in releases:
+            kind = " (draft)" if r.is_draft else " (prerelease)" if r.is_prerelease else ""
+            print(f"       {r.tag_name}{kind}  {r.published_at}")
+
+    try:
+        dirty = gh.dirty_files()
+    except gh.ZithubError:
+        dirty = []
+    if dirty:
+        print(_yellow("local  dirty — not included in the release:"))
+        for line in dirty:
+            print(f"       {line}")
+    else:
+        print(f"local  {_green('clean')}")
+
+    try:
+        gh.fetch_all()
+        sha = gh.current_commit_sha()
+        remote_sha = gh.remote_branch_sha(target)
+    except gh.ZithubError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return None
+    if remote_sha is None:
+        print(
+            f"error: origin/{target} not found — push with `git push -u origin {target}` first",
+            file=sys.stderr,
+        )
+        return None
+    if sha != remote_sha:
+        print(
+            f"error: local HEAD ({sha[:12]}) != origin/{target} ({remote_sha[:12]}) — "
+            f"push with `git push origin {target}` or reconcile, then retry",
+            file=sys.stderr,
+        )
+        return None
+    print(f"sync   ok ({sha[:12]})")
+
+    if not _wait_for_release_ci(sha, target):
+        return None
+
+    return target, sha
+
+
+def cmd_release_preflight(args: argparse.Namespace) -> int:
+    result = _release_preflight(args.target)
+    if result is None:
+        return 1
+    print(_green("PREFLIGHT PASS"))
+    return 0
+
+
+def cmd_release_create(args: argparse.Namespace) -> int:
+    target = args.target
+    if not args.force:
+        result = _release_preflight(args.target)
+        if result is None:
+            return 1
+        target, _sha = result
+
+    notes = args.notes
+    if args.notes_file:
+        with open(args.notes_file, encoding="utf-8") as f:
+            notes = f.read()
+    if not notes:
+        print("error: pass --notes or --notes-file", file=sys.stderr)
+        return 1
+
+    try:
+        url = gh.create_release(
+            tag=args.tag,
+            notes=notes,
+            title=args.title,
+            target=target,
+            draft=args.draft,
+            prerelease=args.prerelease,
+        )
+    except gh.ZithubError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(_green(f"released: {url}"))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zh", description="batched gh PR actions for AI agents"
@@ -357,58 +456,6 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
     pr = sub.add_parser("pr", help="PR write actions")
     pr_sub = pr.add_subparsers(dest="pr_command", required=True)
-
-    p_create = pr_sub.add_parser("create", help="open a pull request")
-    p_create.add_argument("-t", "--title")
-    p_create.add_argument("-b", "--body")
-    p_create.add_argument("-F", "--body-file", dest="body_file")
-    p_create.add_argument("-B", "--base")
-    p_create.add_argument("-H", "--head")
-    p_create.add_argument("-d", "--draft", action="store_true")
-    p_create.add_argument("-f", "--fill", action="store_true", help="use commit info for title/body")
-    p_create.add_argument("-l", "--label", action="append")
-    p_create.add_argument("-r", "--reviewer", action="append")
-    p_create.add_argument("-a", "--assignee", action="append")
-    p_create.add_argument("-m", "--milestone")
-    p_create.add_argument("-w", "--web", action="store_true")
-    p_create.set_defaults(func=cmd_create)
-
-    p_close = pr_sub.add_parser("close", help="close a pull request")
-    _add_ref_arg(p_close)
-    p_close.add_argument("-c", "--comment", help="leave a closing comment")
-    p_close.add_argument("-d", "--delete-branch", action="store_true")
-    p_close.set_defaults(func=cmd_close)
-
-    p_comment = pr_sub.add_parser("comment", help="add a general PR comment")
-    _add_ref_arg(p_comment)
-    p_comment.add_argument("-b", "--body")
-    p_comment.add_argument("-F", "--body-file", dest="body_file")
-    p_comment.add_argument("--edit-last", action="store_true")
-    p_comment.add_argument("--delete-last", action="store_true")
-    p_comment.add_argument("--create-if-none", action="store_true")
-    p_comment.set_defaults(func=cmd_comment)
-
-    p_review = pr_sub.add_parser("review", help="approve / request changes / comment")
-    _add_ref_arg(p_review)
-    review_group = p_review.add_mutually_exclusive_group()
-    review_group.add_argument("--approve", action="store_true")
-    review_group.add_argument("--request-changes", action="store_true")
-    review_group.add_argument("--comment", dest="review_comment_flag", action="store_true")
-    p_review.add_argument("-b", "--body")
-    p_review.add_argument("-F", "--body-file", dest="body_file")
-    p_review.set_defaults(func=cmd_review)
-
-    p_label = pr_sub.add_parser("label", help="add/remove labels")
-    _add_ref_arg(p_label)
-    p_label.add_argument("--add", action="append", metavar="NAME")
-    p_label.add_argument("--remove", action="append", metavar="NAME")
-    p_label.set_defaults(func=cmd_label)
-
-    p_reviewer = pr_sub.add_parser("reviewer", help="add/remove reviewers")
-    _add_ref_arg(p_reviewer)
-    p_reviewer.add_argument("--add", action="append", metavar="LOGIN")
-    p_reviewer.add_argument("--remove", action="append", metavar="LOGIN")
-    p_reviewer.set_defaults(func=cmd_reviewer)
 
     p_threads = pr_sub.add_parser(
         "threads", help="list review-comment threads (with the ids reply/resolve need)"
@@ -448,6 +495,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="merge + delete branch: `merge` with cleanup defaults on",
     )
     _add_merge_args(p_ship, default_delete_branch=True)
+
+    release = sub.add_parser("release", help="release preflight + create")
+    release_sub = release.add_subparsers(dest="release_command", required=True)
+
+    p_preflight = release_sub.add_parser(
+        "preflight",
+        help="check gh auth, target branch, remote sync, and CI before releasing",
+    )
+    p_preflight.add_argument(
+        "--target", metavar="BRANCH", help="release branch (default: repo's default branch)"
+    )
+    p_preflight.set_defaults(func=cmd_release_preflight)
+
+    p_release_create = release_sub.add_parser(
+        "create", help="preflight, then create the release"
+    )
+    p_release_create.add_argument("tag", help="release tag/version, e.g. v1.3.0")
+    p_release_create.add_argument("-n", "--notes", help="release notes")
+    p_release_create.add_argument(
+        "-F", "--notes-file", dest="notes_file", help="read release notes from file"
+    )
+    p_release_create.add_argument("-t", "--title", help="release title (default: the tag)")
+    p_release_create.add_argument(
+        "--target", metavar="BRANCH", help="release branch (default: repo's default branch)"
+    )
+    p_release_create.add_argument("-d", "--draft", action="store_true")
+    p_release_create.add_argument("-p", "--prerelease", action="store_true")
+    p_release_create.add_argument(
+        "--force", action="store_true", help="skip the preflight and create immediately"
+    )
+    p_release_create.set_defaults(func=cmd_release_create)
 
     return parser
 

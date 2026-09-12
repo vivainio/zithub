@@ -21,18 +21,37 @@ class ZithubError(Exception):
     """Raised when a required CLI is missing or a command fails."""
 
 
-def _run(args: list[str]) -> str:
+def _run_result(args: list[str]) -> subprocess.CompletedProcess:
     try:
         result = subprocess.run(args, capture_output=True, text=True, check=False)
     except FileNotFoundError as exc:
         raise ZithubError(f"`{args[0]}` not found on PATH") from exc
     if result.returncode != 0:
         raise ZithubError(result.stderr.strip() or f"`{' '.join(args)}` failed")
-    return result.stdout.strip()
+    return result
+
+
+def _run(args: list[str]) -> str:
+    return _run_result(args).stdout.strip()
+
+
+def _run_raw(args: list[str]) -> str:
+    """Like _run, but only trims the trailing newline — for output (e.g.
+    `git status --short`) whose leading whitespace on the first line is
+    meaningful and would otherwise be eaten by _run's full .strip()."""
+    return _run_result(args).stdout.rstrip("\n")
 
 
 def _run_json(args: list[str]):
     return json.loads(_run(args))
+
+
+def _run_ok(args: list[str]) -> bool:
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, check=False)
+    except FileNotFoundError:
+        return False
+    return result.returncode == 0
 
 
 def run_passthrough(args: list[str]) -> int:
@@ -279,3 +298,215 @@ def reply_to_thread(thread_id: str, body: str) -> str:
     )
     comment = (((data.get("data") or {}).get("addPullRequestReviewThreadReply") or {}).get("comment") or {})
     return comment.get("url", "")
+
+
+# ---------------------------------------------------------------------------
+# release preflight + create — ports the github-release skill's preflight.py
+# checks (gh auth, target branch, remote sync, CI) into zh so `release
+# create` can gate on them directly instead of a separate script + a
+# hand-typed `gh release create`.
+
+_DIRTY_IGNORE = {"uv.lock"}
+
+
+def current_branch() -> str:
+    return _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+
+
+def current_commit_sha() -> str:
+    return _run(["git", "rev-parse", "HEAD"])
+
+
+def fetch_all() -> None:
+    _run(["git", "fetch", "origin", "--prune", "--tags"])
+
+
+def remote_branch_sha(branch: str) -> str | None:
+    try:
+        return _run(["git", "rev-parse", f"origin/{branch}"])
+    except ZithubError:
+        return None
+
+
+def dirty_files() -> list[str]:
+    """Uncommitted changes (tracked or untracked) that won't be part of the
+    release since the release tag points at HEAD. `uv.lock` is excluded —
+    it's routinely rewritten by tooling and not worth flagging every time."""
+    lines = _run_raw(["git", "status", "--short"]).splitlines()
+    return [line for line in lines if line[3:].strip() not in _DIRTY_IGNORE]
+
+
+@dataclass
+class GhAccount:
+    login: str
+    active: bool
+
+
+def list_gh_accounts() -> list[GhAccount]:
+    try:
+        data = _run_json(["gh", "auth", "status", "--json", "hosts"])
+    except ZithubError:
+        return []
+    return [
+        GhAccount(login=a.get("login", ""), active=bool(a.get("active")))
+        for a in data.get("hosts", {}).get("github.com", [])
+    ]
+
+
+def _repo_visible() -> bool:
+    return _run_ok(["gh", "repo", "view", "--json", "id"])
+
+
+def ensure_gh_account_for_repo() -> str:
+    """The logged-in gh account that can actually see this repo, switching
+    to it if the currently active one can't. Tests real access via `gh repo
+    view` rather than guessing from a login/owner naming convention, so it
+    works for orgs whose name doesn't happen to embed the account's login.
+    Raises ZithubError if no logged-in account can view the repo."""
+    accounts = list_gh_accounts()
+    if not accounts:
+        raise ZithubError("no gh accounts logged in — run `gh auth login`")
+
+    if _repo_visible():
+        active = next((a for a in accounts if a.active), None)
+        return active.login if active else accounts[0].login
+
+    for account in accounts:
+        if account.active:
+            continue
+        _run(["gh", "auth", "switch", "--hostname", "github.com", "--user", account.login])
+        if _repo_visible():
+            return account.login
+
+    tried = ", ".join(a.login for a in accounts)
+    raise ZithubError(f"no logged-in gh account can view this repository (tried: {tried})")
+
+
+@dataclass
+class ReleaseInfo:
+    tag_name: str
+    name: str
+    published_at: str | None
+    is_draft: bool
+    is_prerelease: bool
+
+
+def recent_releases(limit: int = 5) -> list[ReleaseInfo]:
+    data = _run_json(
+        [
+            "gh",
+            "release",
+            "list",
+            "--limit",
+            str(limit),
+            "--json",
+            "tagName,name,publishedAt,isDraft,isPrerelease",
+        ]
+    )
+    return [
+        ReleaseInfo(
+            tag_name=r["tagName"],
+            name=r.get("name") or r["tagName"],
+            published_at=r.get("publishedAt"),
+            is_draft=r["isDraft"],
+            is_prerelease=r["isPrerelease"],
+        )
+        for r in data
+    ]
+
+
+@dataclass
+class WorkflowRun:
+    database_id: int
+    name: str
+    status: str
+    conclusion: str | None
+    url: str
+    head_sha: str | None = None
+
+
+_RUN_LIST_FIELDS = "databaseId,name,status,conclusion,url,headSha"
+
+
+def runs_for_commit(sha: str, limit: int = 100) -> list[WorkflowRun]:
+    """Workflow runs whose head commit is exactly `sha` — gates a release on
+    CI for the precise commit being tagged, not just "the latest run on this
+    branch" (which could predate a since-amended push). Filtered again
+    locally since `gh run list --commit` has been seen returning runs from
+    other commits on some repos/tokens."""
+    data = _run_json(
+        ["gh", "run", "list", "--commit", sha, "--limit", str(limit), "--json", _RUN_LIST_FIELDS]
+    )
+    return [
+        WorkflowRun(
+            database_id=r["databaseId"],
+            name=r["name"],
+            status=r["status"],
+            conclusion=r.get("conclusion"),
+            url=r["url"],
+            head_sha=r.get("headSha"),
+        )
+        for r in data
+        if r.get("headSha") == sha
+    ]
+
+
+def latest_runs_for_branch(branch: str, limit: int = 5) -> list[WorkflowRun]:
+    data = _run_json(
+        [
+            "gh",
+            "run",
+            "list",
+            "--branch",
+            branch,
+            "--limit",
+            str(limit),
+            "--json",
+            _RUN_LIST_FIELDS,
+        ]
+    )
+    return [
+        WorkflowRun(
+            database_id=r["databaseId"],
+            name=r["name"],
+            status=r["status"],
+            conclusion=r.get("conclusion"),
+            url=r["url"],
+            head_sha=r.get("headSha"),
+        )
+        for r in data
+    ]
+
+
+def run_failure_log(database_id: int, lines: int = 40) -> str | None:
+    """Best-effort tail of a failed run's log — best-effort since a run can
+    fail in ways that leave no per-step log (infra failure, cancellation)."""
+    try:
+        text = _run(["gh", "run", "view", str(database_id), "--log-failed"])
+    except ZithubError:
+        return None
+    if not text:
+        return None
+    return "\n".join(text.splitlines()[-lines:])
+
+
+def create_release(
+    tag: str,
+    notes: str,
+    title: str | None = None,
+    target: str | None = None,
+    draft: bool = False,
+    prerelease: bool = False,
+) -> str:
+    """Creates the GitHub release (and its tag) via `gh release create`.
+    Returns the release URL."""
+    cmd = ["gh", "release", "create", tag, "--notes", notes]
+    if title:
+        cmd += ["--title", title]
+    if target:
+        cmd += ["--target", target]
+    if draft:
+        cmd.append("--draft")
+    if prerelease:
+        cmd.append("--prerelease")
+    return _run(cmd)
