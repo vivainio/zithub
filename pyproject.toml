@@ -1,0 +1,46 @@
+[project]
+name = "zithub"
+version = "0.1.0"
+description = "Batched gh CLI actions for PR workflows: merge preflight, review-thread reply/resolve, and more in one call"
+readme = "README.md"
+authors = [
+    { name = "Ville Vainio", email = "vivainio@gmail.com" }
+]
+license = "MIT"
+requires-python = ">=3.10"
+keywords = ["git", "github", "cli", "pull-request", "ci", "gh"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+    "Topic :: Utilities",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/vivainio/zithub"
+Repository = "https://github.com/vivainio/zithub"
+Issues = "https://github.com/vivainio/zithub/issues"
+
+[project.scripts]
+zh = "zithub:main"
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "ty>=0.0.72",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
