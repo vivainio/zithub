@@ -10,7 +10,7 @@ import argparse
 import sys
 import time
 
-from . import gh
+from . import gh, versioning
 
 
 def _color(text: str, code: str) -> str:
@@ -326,10 +326,10 @@ def _wait_for_release_ci(sha: str, branch: str) -> bool:
     return True
 
 
-def _release_preflight(target_arg: str | None) -> tuple[str, str] | None:
+def _release_preflight(target_arg: str | None) -> tuple[str, str, list[gh.ReleaseInfo]] | None:
     """Runs every preflight check, printing progress as it goes. Returns
-    (target_branch, head_sha) on pass, None on failure (the specific check
-    that failed has already printed its own error)."""
+    (target_branch, head_sha, recent_releases) on pass, None on failure (the
+    specific check that failed has already printed its own error)."""
     try:
         branch = gh.current_branch()
     except gh.ZithubError as exc:
@@ -406,25 +406,65 @@ def _release_preflight(target_arg: str | None) -> tuple[str, str] | None:
     if not _wait_for_release_ci(sha, target):
         return None
 
-    return target, sha
+    return target, sha, releases
 
 
-def cmd_release_preflight(args: argparse.Namespace) -> int:
+def _print_commits(previous_tag: str | None) -> None:
+    try:
+        commits = gh.commits_since(previous_tag)
+    except gh.ZithubError:
+        commits = []
+    if not commits:
+        return
+    label = f"commits since {previous_tag}" if previous_tag else "commits (first release)"
+    print(f"\n{label}:")
+    for c in commits:
+        print(f"       {c}")
+
+
+def _gh_release_create_hint(tag: str, target_arg: str | None) -> str:
+    """The literal `gh release create` command to run once notes are
+    written. Points at plain `gh`, not `zh release create` — the preflight
+    that command would redo (including the CI wait) was just run right
+    here, so re-running it a moment later just to create is wasted work."""
+    target_flag = f" --target {target_arg}" if target_arg else ""
+    return f'gh release create {tag} --notes "..." --title {tag}{target_flag}'
+
+
+def cmd_release(args: argparse.Namespace) -> int:
+    """Bare `zh release`: full preflight, then — instead of just pass/fail —
+    the commit log a release's notes get written from, plus the exact next
+    command (with the version already computed) for each bump size."""
     result = _release_preflight(args.target)
     if result is None:
         return 1
+    target, _sha, releases = result
     print(_green("PREFLIGHT PASS"))
+
+    previous_tag = releases[0].tag_name if releases else None
+    _print_commits(previous_tag)
+    print()
+
+    if previous_tag is None:
+        print("next   no previous release — write notes, pick a starting version, then:")
+        print(f"       {_gh_release_create_hint('<version>', args.target)}")
+        return 0
+
+    print("next   write release notes from the commits above, then:")
+    for part in ("patch", "minor", "major"):
+        try:
+            candidate = versioning.bump(previous_tag, part)
+        except versioning.VersionError:
+            print(
+                f"       can't auto-bump '{previous_tag}' (not a plain vX.Y.Z tag) — "
+                "pick the next version yourself"
+            )
+            break
+        print(f"       {_gh_release_create_hint(candidate, args.target)}   ({part})")
     return 0
 
 
-def cmd_release_create(args: argparse.Namespace) -> int:
-    target = args.target
-    if not args.force:
-        result = _release_preflight(args.target)
-        if result is None:
-            return 1
-        target, _sha = result
-
+def _finish_release(tag: str, target: str | None, args: argparse.Namespace) -> int:
     notes = args.notes
     if args.notes_file:
         with open(args.notes_file, encoding="utf-8") as f:
@@ -435,9 +475,9 @@ def cmd_release_create(args: argparse.Namespace) -> int:
 
     try:
         url = gh.create_release(
-            tag=args.tag,
+            tag=tag,
             notes=notes,
-            title=args.title,
+            title=args.title or tag,
             target=target,
             draft=args.draft,
             prerelease=args.prerelease,
@@ -447,6 +487,71 @@ def cmd_release_create(args: argparse.Namespace) -> int:
         return 1
     print(_green(f"released: {url}"))
     return 0
+
+
+def cmd_release_create(args: argparse.Namespace) -> int:
+    target = args.target
+    if not args.force:
+        result = _release_preflight(args.target)
+        if result is None:
+            return 1
+        target, _sha, _releases = result
+    return _finish_release(args.tag, target, args)
+
+
+def cmd_release_bump(args: argparse.Namespace) -> int:
+    """`zh release patch/minor/major`: preflight + compute the next version
+    from the latest release tag, then print it and the exact `release
+    create` command to run. Never creates the release itself — bumping the
+    version and choosing to release it are kept as two explicit steps, so
+    nothing gets published just because a version number was requested."""
+    target = args.target
+    releases: list[gh.ReleaseInfo] = []
+    if not args.force:
+        result = _release_preflight(args.target)
+        if result is None:
+            return 1
+        target, _sha, releases = result
+    else:
+        try:
+            releases = gh.recent_releases(limit=1)
+        except gh.ZithubError:
+            releases = []
+
+    if not releases:
+        print(
+            "error: no previous release to bump from — "
+            'use `zh release create <version> --notes "..."` for the first release',
+            file=sys.stderr,
+        )
+        return 1
+
+    previous_tag = releases[0].tag_name
+    try:
+        tag = versioning.bump(previous_tag, args.part)
+    except versioning.VersionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"version {previous_tag} -> {tag}")
+    _print_commits(previous_tag)
+    print()
+    print(f"next   {_gh_release_create_hint(tag, args.target)}")
+    return 0
+
+
+def _add_release_create_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("-n", "--notes", help="release notes")
+    p.add_argument("-F", "--notes-file", dest="notes_file", help="read release notes from file")
+    p.add_argument("-t", "--title", help="release title (default: the tag)")
+    p.add_argument(
+        "--target", metavar="BRANCH", help="release branch (default: repo's default branch)"
+    )
+    p.add_argument("-d", "--draft", action="store_true")
+    p.add_argument("-p", "--prerelease", action="store_true")
+    p.add_argument(
+        "--force", action="store_true", help="skip the preflight and create immediately"
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -496,36 +601,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_merge_args(p_ship, default_delete_branch=True)
 
-    release = sub.add_parser("release", help="release preflight + create")
-    release_sub = release.add_subparsers(dest="release_command", required=True)
-
-    p_preflight = release_sub.add_parser(
-        "preflight",
-        help="check gh auth, target branch, remote sync, and CI before releasing",
+    release = sub.add_parser(
+        "release",
+        help="preflight + what to release next (bare, or patch/minor/major); create to cut one",
     )
-    p_preflight.add_argument(
+    release.add_argument(
         "--target", metavar="BRANCH", help="release branch (default: repo's default branch)"
     )
-    p_preflight.set_defaults(func=cmd_release_preflight)
+    release.set_defaults(func=cmd_release)
+    release_sub = release.add_subparsers(dest="release_command")
 
     p_release_create = release_sub.add_parser(
-        "create", help="preflight, then create the release"
+        "create", help="preflight, then create the release at an explicit version"
     )
     p_release_create.add_argument("tag", help="release tag/version, e.g. v1.3.0")
-    p_release_create.add_argument("-n", "--notes", help="release notes")
-    p_release_create.add_argument(
-        "-F", "--notes-file", dest="notes_file", help="read release notes from file"
-    )
-    p_release_create.add_argument("-t", "--title", help="release title (default: the tag)")
-    p_release_create.add_argument(
-        "--target", metavar="BRANCH", help="release branch (default: repo's default branch)"
-    )
-    p_release_create.add_argument("-d", "--draft", action="store_true")
-    p_release_create.add_argument("-p", "--prerelease", action="store_true")
-    p_release_create.add_argument(
-        "--force", action="store_true", help="skip the preflight and create immediately"
-    )
+    _add_release_create_args(p_release_create)
     p_release_create.set_defaults(func=cmd_release_create)
+
+    for part in ("patch", "minor", "major"):
+        p_bump = release_sub.add_parser(
+            part,
+            help=f"preflight, then show the {part}-bumped version and the gh command to create it",
+        )
+        p_bump.add_argument(
+            "--target", metavar="BRANCH", help="release branch (default: repo's default branch)"
+        )
+        p_bump.add_argument(
+            "--force", action="store_true", help="skip the preflight"
+        )
+        p_bump.set_defaults(func=cmd_release_bump, part=part)
 
     return parser
 

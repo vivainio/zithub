@@ -336,6 +336,23 @@ def dirty_files() -> list[str]:
     return [line for line in lines if line[3:].strip() not in _DIRTY_IGNORE]
 
 
+def commits_since(tag: str | None, limit: int = 50) -> list[str]:
+    """One-line log of commits since `tag` (or the last `limit` commits if
+    there's no previous release yet) — the input a release's notes get
+    written from. Best-effort: empty (never raises) if git has no history
+    or `tag` doesn't exist locally."""
+    args = (
+        ["git", "log", f"{tag}..HEAD", "--oneline", "--no-decorate"]
+        if tag
+        else ["git", "log", f"-{limit}", "--oneline", "--no-decorate"]
+    )
+    try:
+        output = _run(args)
+    except ZithubError:
+        return []
+    return output.splitlines() if output else []
+
+
 @dataclass
 class GhAccount:
     login: str

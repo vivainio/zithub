@@ -380,57 +380,78 @@ def set_preflight_up_to_ci(fake_cli, branch="main", sha="abc123", dirty=""):
     fake_cli.set(["git", "rev-parse", f"origin/{branch}"], stdout=sha)
 
 
-def test_release_preflight_pass(fake_cli, monkeypatch, capsys):
+def set_ci_success(fake_cli, sha="abc123"):
+    fake_cli.set(
+        ["gh", "run", "list", "--commit", sha, "--limit", "100", "--json", _RUN_LIST_FIELDS],
+        stdout=json.dumps(
+            [{"databaseId": 1, "name": "build", "status": "completed", "conclusion": "success", "url": "u1", "headSha": sha}]
+        ),
+    )
+
+
+def test_release_bare_pass_no_previous_release(fake_cli, monkeypatch, capsys):
     import zithub.cli as cli_mod
 
     monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
     set_preflight_up_to_ci(fake_cli)
-    fake_cli.set(
-        ["gh", "run", "list", "--commit", "abc123", "--limit", "100", "--json", _RUN_LIST_FIELDS],
-        stdout=json.dumps(
-            [{"databaseId": 1, "name": "build", "status": "completed", "conclusion": "success", "url": "u1", "headSha": "abc123"}]
-        ),
-    )
-    rc = run(["release", "preflight"])
+    set_ci_success(fake_cli)
+    fake_cli.set(["git", "log", "-50", "--oneline", "--no-decorate"], stdout="")
+    rc = run(["release"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "PREFLIGHT PASS" in out
+    assert "no previous release" in out
+    assert "gh release create <version>" in out
 
 
-def test_release_preflight_branch_mismatch(fake_cli, capsys):
+def test_release_bare_suggests_bumps(fake_cli, monkeypatch, capsys):
+    import zithub.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
+    set_preflight_up_to_ci(fake_cli)
+    fake_cli._responses[
+        ("gh", "release", "list", "--limit", "5", "--json", "tagName,name,publishedAt,isDraft,isPrerelease")
+    ] = [(json.dumps([{"tagName": "v1.2.3", "name": "v1.2.3", "publishedAt": "t", "isDraft": False, "isPrerelease": False}]), 0, "")]
+    set_ci_success(fake_cli)
+    fake_cli.set(["git", "log", "v1.2.3..HEAD", "--oneline", "--no-decorate"], stdout="")
+    rc = run(["release"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "gh release create v1.2.4 --notes" in out and "(patch)" in out
+    assert "gh release create v1.3.0 --notes" in out and "(minor)" in out
+    assert "gh release create v2.0.0 --notes" in out and "(major)" in out
+
+
+def test_release_bare_branch_mismatch(fake_cli, capsys):
     set_preflight_up_to_ci(fake_cli, branch="feature")
-    rc = run(["release", "preflight"])
+    rc = run(["release"])
     assert rc == 1
     assert "release target is 'main'" in capsys.readouterr().err
 
 
-def test_release_preflight_dirty_warns_but_passes(fake_cli, monkeypatch, capsys):
+def test_release_bare_dirty_warns_but_passes(fake_cli, monkeypatch, capsys):
     import zithub.cli as cli_mod
 
     monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
     set_preflight_up_to_ci(fake_cli, dirty="?? scratch.txt\n")
-    fake_cli.set(
-        ["gh", "run", "list", "--commit", "abc123", "--limit", "100", "--json", _RUN_LIST_FIELDS],
-        stdout=json.dumps(
-            [{"databaseId": 1, "name": "build", "status": "completed", "conclusion": "success", "url": "u1", "headSha": "abc123"}]
-        ),
-    )
-    rc = run(["release", "preflight"])
+    set_ci_success(fake_cli)
+    fake_cli.set(["git", "log", "-50", "--oneline", "--no-decorate"], stdout="")
+    rc = run(["release"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "dirty" in out
     assert "PREFLIGHT PASS" in out
 
 
-def test_release_preflight_sync_mismatch(fake_cli, capsys):
+def test_release_bare_sync_mismatch(fake_cli, capsys):
     set_preflight_up_to_ci(fake_cli)
     fake_cli._responses[("git", "rev-parse", "origin/main")] = [("def456", 0, "")]
-    rc = run(["release", "preflight"])
+    rc = run(["release"])
     assert rc == 1
     assert "!= origin/main" in capsys.readouterr().err
 
 
-def test_release_preflight_no_ci_found_proceeds(fake_cli, monkeypatch, capsys):
+def test_release_bare_no_ci_found_proceeds(fake_cli, monkeypatch, capsys):
     import zithub.cli as cli_mod
 
     monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
@@ -443,14 +464,15 @@ def test_release_preflight_no_ci_found_proceeds(fake_cli, monkeypatch, capsys):
         ["gh", "run", "list", "--branch", "main", "--limit", "5", "--json", _RUN_LIST_FIELDS],
         stdout="[]",
     )
-    rc = run(["release", "preflight"])
+    fake_cli.set(["git", "log", "-50", "--oneline", "--no-decorate"], stdout="")
+    rc = run(["release"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "proceed with judgement" in out
     assert "PREFLIGHT PASS" in out
 
 
-def test_release_preflight_ci_failed(fake_cli, monkeypatch, capsys):
+def test_release_bare_ci_failed(fake_cli, monkeypatch, capsys):
     import zithub.cli as cli_mod
 
     monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
@@ -462,7 +484,7 @@ def test_release_preflight_ci_failed(fake_cli, monkeypatch, capsys):
         ),
     )
     fake_cli.set(["gh", "run", "view", "1", "--log-failed"], stdout="boom at line 42")
-    rc = run(["release", "preflight"])
+    rc = run(["release"])
     out, err = capsys.readouterr()
     assert rc == 1
     assert "failed" in err
@@ -474,12 +496,7 @@ def test_release_create_runs_preflight_then_creates(fake_cli, monkeypatch, capsy
 
     monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
     set_preflight_up_to_ci(fake_cli)
-    fake_cli.set(
-        ["gh", "run", "list", "--commit", "abc123", "--limit", "100", "--json", _RUN_LIST_FIELDS],
-        stdout=json.dumps(
-            [{"databaseId": 1, "name": "build", "status": "completed", "conclusion": "success", "url": "u1", "headSha": "abc123"}]
-        ),
-    )
+    set_ci_success(fake_cli)
     fake_cli.set(
         ["gh", "release", "create", "v1.0.0", "--notes", "first release", "--title", "v1.0.0", "--target", "main"],
         stdout="https://github.com/acme/widgets/releases/tag/v1.0.0",
@@ -492,7 +509,7 @@ def test_release_create_runs_preflight_then_creates(fake_cli, monkeypatch, capsy
 
 def test_release_create_force_skips_preflight(fake_cli):
     fake_cli.set(
-        ["gh", "release", "create", "v1.0.0", "--notes", "notes"],
+        ["gh", "release", "create", "v1.0.0", "--notes", "notes", "--title", "v1.0.0"],
         stdout="https://github.com/acme/widgets/releases/tag/v1.0.0",
     )
     rc = run(["release", "create", "v1.0.0", "-n", "notes", "--force"])
@@ -500,9 +517,96 @@ def test_release_create_force_skips_preflight(fake_cli):
 
 
 def test_release_create_requires_notes(fake_cli):
-    set_preflight_up_to_ci(fake_cli)
     rc = run(["release", "create", "v1.0.0", "--force"])
     assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# release patch/minor/major
+
+def _set_previous_release(fake_cli, tag="v1.2.3"):
+    fake_cli._responses[
+        ("gh", "release", "list", "--limit", "5", "--json", "tagName,name,publishedAt,isDraft,isPrerelease")
+    ] = [(json.dumps([{"tagName": tag, "name": tag, "publishedAt": "t", "isDraft": False, "isPrerelease": False}]), 0, "")]
+
+
+def test_release_patch_shows_computed_version_and_gh_hint(fake_cli, monkeypatch, capsys):
+    import zithub.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
+    set_preflight_up_to_ci(fake_cli)
+    _set_previous_release(fake_cli)
+    set_ci_success(fake_cli)
+    fake_cli.set(["git", "log", "v1.2.3..HEAD", "--oneline", "--no-decorate"], stdout="")
+    rc = run(["release", "patch"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "v1.2.3 -> v1.2.4" in out
+    assert 'gh release create v1.2.4 --notes "..." --title v1.2.4' in out
+
+
+def test_release_minor_never_creates(fake_cli, monkeypatch, capsys):
+    """`zh release minor` only ever previews — it must never call `gh
+    release create` itself, even implicitly."""
+    import zithub.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
+    set_preflight_up_to_ci(fake_cli)
+    _set_previous_release(fake_cli)
+    set_ci_success(fake_cli)
+    fake_cli.set(["git", "log", "v1.2.3..HEAD", "--oneline", "--no-decorate"], stdout="")
+    rc = run(["release", "minor"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "v1.2.3 -> v1.3.0" in out
+    assert 'gh release create v1.3.0 --notes "..." --title v1.3.0' in out
+    assert not any(c[:3] == ["gh", "release", "create"] for c in fake_cli.calls)
+
+
+def test_release_major_force_uses_recent_releases_without_preflight(fake_cli):
+    fake_cli.set(
+        ["gh", "release", "list", "--limit", "1", "--json", "tagName,name,publishedAt,isDraft,isPrerelease"],
+        stdout=json.dumps([{"tagName": "v1.2.3", "name": "v1.2.3", "publishedAt": "t", "isDraft": False, "isPrerelease": False}]),
+    )
+    fake_cli.set(["git", "log", "v1.2.3..HEAD", "--oneline", "--no-decorate"], stdout="")
+    rc = run(["release", "major", "--force"])
+    assert rc == 0
+    assert not any(c[:3] == ["gh", "release", "create"] for c in fake_cli.calls)
+
+
+def test_release_bump_target_flag_only_when_explicit(fake_cli, capsys):
+    fake_cli.set(
+        ["gh", "release", "list", "--limit", "1", "--json", "tagName,name,publishedAt,isDraft,isPrerelease"],
+        stdout=json.dumps([{"tagName": "v1.2.3", "name": "v1.2.3", "publishedAt": "t", "isDraft": False, "isPrerelease": False}]),
+    )
+    fake_cli.set(["git", "log", "v1.2.3..HEAD", "--oneline", "--no-decorate"], stdout="")
+    rc = run(["release", "patch", "--target", "release-2.0", "--force"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "--target release-2.0" in out
+
+
+def test_release_bump_no_previous_release_errors(fake_cli, monkeypatch, capsys):
+    import zithub.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
+    set_preflight_up_to_ci(fake_cli)
+    set_ci_success(fake_cli)
+    rc = run(["release", "patch"])
+    assert rc == 1
+    assert "no previous release to bump from" in capsys.readouterr().err
+
+
+def test_release_bump_non_semver_tag_errors(fake_cli, monkeypatch, capsys):
+    import zithub.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
+    set_preflight_up_to_ci(fake_cli)
+    _set_previous_release(fake_cli, tag="release-2026-01")
+    set_ci_success(fake_cli)
+    rc = run(["release", "patch"])
+    assert rc == 1
+    assert "doesn't look like a plain semver tag" in capsys.readouterr().err
 
 
 def test_merge_pending_without_wait_blocks(fake_cli, capsys):
