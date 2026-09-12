@@ -440,9 +440,22 @@ class WorkflowRun:
     conclusion: str | None
     url: str
     head_sha: str | None = None
+    created_at: str | None = None
 
 
-_RUN_LIST_FIELDS = "databaseId,name,status,conclusion,url,headSha"
+_RUN_LIST_FIELDS = "databaseId,name,status,conclusion,url,headSha,createdAt"
+
+
+def _workflow_run_from_json(r: dict) -> WorkflowRun:
+    return WorkflowRun(
+        database_id=r["databaseId"],
+        name=r["name"],
+        status=r["status"],
+        conclusion=r.get("conclusion"),
+        url=r["url"],
+        head_sha=r.get("headSha"),
+        created_at=r.get("createdAt"),
+    )
 
 
 def runs_for_commit(sha: str, limit: int = 100) -> list[WorkflowRun]:
@@ -454,18 +467,7 @@ def runs_for_commit(sha: str, limit: int = 100) -> list[WorkflowRun]:
     data = _run_json(
         ["gh", "run", "list", "--commit", sha, "--limit", str(limit), "--json", _RUN_LIST_FIELDS]
     )
-    return [
-        WorkflowRun(
-            database_id=r["databaseId"],
-            name=r["name"],
-            status=r["status"],
-            conclusion=r.get("conclusion"),
-            url=r["url"],
-            head_sha=r.get("headSha"),
-        )
-        for r in data
-        if r.get("headSha") == sha
-    ]
+    return [_workflow_run_from_json(r) for r in data if r.get("headSha") == sha]
 
 
 def latest_runs_for_branch(branch: str, limit: int = 5) -> list[WorkflowRun]:
@@ -482,17 +484,19 @@ def latest_runs_for_branch(branch: str, limit: int = 5) -> list[WorkflowRun]:
             _RUN_LIST_FIELDS,
         ]
     )
-    return [
-        WorkflowRun(
-            database_id=r["databaseId"],
-            name=r["name"],
-            status=r["status"],
-            conclusion=r.get("conclusion"),
-            url=r["url"],
-            head_sha=r.get("headSha"),
-        )
-        for r in data
-    ]
+    return [_workflow_run_from_json(r) for r in data]
+
+
+def runs_for_event(event: str, limit: int = 10) -> list[WorkflowRun]:
+    """Workflow runs triggered by `event` (e.g. "release") — not scoped to a
+    branch or commit, since a `release: published` workflow's headBranch is
+    the tag, not a real branch, and `gh run list` has no "triggered by this
+    exact release" filter. Callers match the run(s) they mean by createdAt
+    against a cutoff captured just before the triggering action."""
+    data = _run_json(
+        ["gh", "run", "list", "--event", event, "--limit", str(limit), "--json", _RUN_LIST_FIELDS]
+    )
+    return [_workflow_run_from_json(r) for r in data]
 
 
 def run_failure_log(database_id: int, lines: int = 40) -> str | None:

@@ -80,8 +80,14 @@ zh release patch --target release-2.0
 ```
 
 `zh release create` is the one command that actually publishes — it runs
-the same preflight itself first (unless `--force`), so it's also safe to
-call directly without a prior `zh release`:
+the same preflight itself first (unless `--force`), requires release notes
+(`-n`/`--notes` or `-F`/`--notes-file` — one of them, always), and after
+creating the GitHub release it also polls for and waits on any workflow
+run(s) triggered by that release (e.g. a PyPI publish job), reporting
+success or failure instead of leaving that for the caller to check
+separately. A repo with no such workflow just proceeds — it's not treated
+as a failure. So it's also safe to call directly without a prior
+`zh release`:
 
 ```
 zh release create v1.3.0 -n "$(cat notes.md)"

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 
 from . import gh, versioning
 
@@ -464,15 +465,62 @@ def cmd_release(args: argparse.Namespace) -> int:
     return 0
 
 
+_PUBLISH_QUICK_ATTEMPTS = 5
+_PUBLISH_QUICK_INTERVAL_SECONDS = 2
+_PUBLISH_POLL_INTERVAL_SECONDS = 10
+_PUBLISH_MAX_ATTEMPTS = 60
+
+
+def _wait_for_release_workflows(since: str) -> bool:
+    """Poll for workflow run(s) triggered by this release's `release:
+    published` event (e.g. a PyPI publish job) that were created at or
+    after `since` (an ISO-8601 UTC cutoff captured just before the release
+    was created — string comparison sorts correctly since gh's createdAt is
+    fixed-width ISO-8601). True if every matching run succeeds, or none
+    ever appears (plenty of repos have no such workflow, and this isn't
+    reason to call the release itself a failure) — False if any run fails
+    or is still going once the timeout is hit."""
+    seen: dict[int, gh.WorkflowRun] = {}
+    for attempt in range(_PUBLISH_MAX_ATTEMPTS):
+        for r in gh.runs_for_event("release"):
+            if (r.created_at or "") >= since:
+                seen[r.database_id] = r
+
+        if not seen:
+            if attempt >= _PUBLISH_QUICK_ATTEMPTS:
+                print(_dim("       no workflow triggered by the release — nothing to wait on"))
+                return True
+            time.sleep(_PUBLISH_QUICK_INTERVAL_SECONDS)
+            continue
+
+        pending = [r for r in seen.values() if r.status != "completed"]
+        if not pending:
+            break
+        names = ", ".join(f"{r.name}={r.status}" for r in pending)
+        print(_dim(f"       waiting on release workflow(s): {names}"))
+        time.sleep(_PUBLISH_POLL_INTERVAL_SECONDS)
+    else:
+        names = ", ".join(f"{r.name}={r.status}" for r in seen.values() if r.status != "completed")
+        print(f"error: release workflow(s) did not complete in time: {names}", file=sys.stderr)
+        return False
+
+    failed = [r for r in seen.values() if r.conclusion != "success"]
+    if failed:
+        print("error: release workflow(s) failed:", file=sys.stderr)
+        _print_run_failures(failed)
+        return False
+
+    print(f"publish {_green('success')} ({', '.join(r.name for r in seen.values())})")
+    return True
+
+
 def _finish_release(tag: str, target: str | None, args: argparse.Namespace) -> int:
     notes = args.notes
     if args.notes_file:
         with open(args.notes_file, encoding="utf-8") as f:
             notes = f.read()
-    if not notes:
-        print("error: pass --notes or --notes-file", file=sys.stderr)
-        return 1
 
+    since = (datetime.now(timezone.utc) - timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
         url = gh.create_release(
             tag=tag,
@@ -486,6 +534,9 @@ def _finish_release(tag: str, target: str | None, args: argparse.Namespace) -> i
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(_green(f"released: {url}"))
+
+    if not _wait_for_release_workflows(since):
+        return 1
     return 0
 
 
@@ -541,8 +592,11 @@ def cmd_release_bump(args: argparse.Namespace) -> int:
 
 
 def _add_release_create_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument("-n", "--notes", help="release notes")
-    p.add_argument("-F", "--notes-file", dest="notes_file", help="read release notes from file")
+    notes_group = p.add_mutually_exclusive_group(required=True)
+    notes_group.add_argument("-n", "--notes", help="release notes")
+    notes_group.add_argument(
+        "-F", "--notes-file", dest="notes_file", help="read release notes from file"
+    )
     p.add_argument("-t", "--title", help="release title (default: the tag)")
     p.add_argument(
         "--target", metavar="BRANCH", help="release branch (default: repo's default branch)"

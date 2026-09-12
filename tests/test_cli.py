@@ -356,7 +356,7 @@ def test_merge_force_skips_preflight(fake_cli):
 # ---------------------------------------------------------------------------
 # release preflight / create
 
-_RUN_LIST_FIELDS = "databaseId,name,status,conclusion,url,headSha"
+_RUN_LIST_FIELDS = "databaseId,name,status,conclusion,url,headSha,createdAt"
 
 
 def set_preflight_up_to_ci(fake_cli, branch="main", sha="abc123", dirty=""):
@@ -491,6 +491,13 @@ def test_release_bare_ci_failed(fake_cli, monkeypatch, capsys):
     assert "boom at line 42" in out
 
 
+def _set_no_publish_workflow(fake_cli):
+    fake_cli.set(
+        ["gh", "run", "list", "--event", "release", "--limit", "10", "--json", _RUN_LIST_FIELDS],
+        stdout="[]",
+    )
+
+
 def test_release_create_runs_preflight_then_creates(fake_cli, monkeypatch, capsys):
     import zithub.cli as cli_mod
 
@@ -501,24 +508,96 @@ def test_release_create_runs_preflight_then_creates(fake_cli, monkeypatch, capsy
         ["gh", "release", "create", "v1.0.0", "--notes", "first release", "--title", "v1.0.0", "--target", "main"],
         stdout="https://github.com/acme/widgets/releases/tag/v1.0.0",
     )
+    _set_no_publish_workflow(fake_cli)
     rc = run(["release", "create", "v1.0.0", "-n", "first release", "-t", "v1.0.0"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "released:" in out
 
 
-def test_release_create_force_skips_preflight(fake_cli):
+def test_release_create_force_skips_preflight(fake_cli, monkeypatch):
+    import zithub.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
     fake_cli.set(
         ["gh", "release", "create", "v1.0.0", "--notes", "notes", "--title", "v1.0.0"],
         stdout="https://github.com/acme/widgets/releases/tag/v1.0.0",
     )
+    _set_no_publish_workflow(fake_cli)
     rc = run(["release", "create", "v1.0.0", "-n", "notes", "--force"])
     assert rc == 0
 
 
-def test_release_create_requires_notes(fake_cli):
-    rc = run(["release", "create", "v1.0.0", "--force"])
+def test_release_create_waits_for_publish_workflow_success(fake_cli, monkeypatch, capsys):
+    import zithub.cli as cli_mod
+    from datetime import datetime, timezone
+
+    monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
+    created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    fake_cli.set(
+        ["gh", "release", "create", "v1.0.0", "--notes", "notes", "--title", "v1.0.0"],
+        stdout="https://github.com/acme/widgets/releases/tag/v1.0.0",
+    )
+    fake_cli.set(
+        ["gh", "run", "list", "--event", "release", "--limit", "10", "--json", _RUN_LIST_FIELDS],
+        stdout=json.dumps(
+            [
+                {
+                    "databaseId": 1,
+                    "name": "Publish to PyPI",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "url": "u1",
+                    "headSha": "abc",
+                    "createdAt": created_at,
+                }
+            ]
+        ),
+    )
+    rc = run(["release", "create", "v1.0.0", "-n", "notes", "--force"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "publish success (Publish to PyPI)" in out
+
+
+def test_release_create_reports_publish_workflow_failure(fake_cli, monkeypatch, capsys):
+    import zithub.cli as cli_mod
+    from datetime import datetime, timezone
+
+    monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
+    created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    fake_cli.set(
+        ["gh", "release", "create", "v1.0.0", "--notes", "notes", "--title", "v1.0.0"],
+        stdout="https://github.com/acme/widgets/releases/tag/v1.0.0",
+    )
+    fake_cli.set(
+        ["gh", "run", "list", "--event", "release", "--limit", "10", "--json", _RUN_LIST_FIELDS],
+        stdout=json.dumps(
+            [
+                {
+                    "databaseId": 1,
+                    "name": "Publish to PyPI",
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "url": "u1",
+                    "headSha": "abc",
+                    "createdAt": created_at,
+                }
+            ]
+        ),
+    )
+    fake_cli.set(["gh", "run", "view", "1", "--log-failed"], stdout="pypi rejected upload")
+    rc = run(["release", "create", "v1.0.0", "-n", "notes", "--force"])
+    out, err = capsys.readouterr()
     assert rc == 1
+    assert "released:" in out
+    assert "release workflow(s) failed" in err
+
+
+def test_release_create_requires_notes(fake_cli):
+    with pytest.raises(SystemExit) as exc:
+        run(["release", "create", "v1.0.0", "--force"])
+    assert exc.value.code == 2
 
 
 # ---------------------------------------------------------------------------
