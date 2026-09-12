@@ -187,6 +187,7 @@ query($owner: String!, $repo: String!, $pr: Int!, $after: String) {
           id
           isResolved
           comments(first: 50) {
+            pageInfo { hasNextPage endCursor }
             nodes { id body createdAt path line author { login } }
           }
         }
@@ -195,6 +196,59 @@ query($owner: String!, $repo: String!, $pr: Int!, $after: String) {
   }
 }
 """
+
+# A thread's own comments are a connection nested inside reviewThreads, so
+# GraphQL has no way to page it directly from the PR query above once a
+# thread has more than one page of comments — re-fetch that thread by its
+# own node id instead.
+_THREAD_COMMENTS_QUERY = """
+query($id: ID!, $after: String) {
+  node(id: $id) {
+    ... on PullRequestReviewThread {
+      comments(first: 50, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes { id body createdAt path line author { login } }
+      }
+    }
+  }
+}
+"""
+
+
+def _parse_review_comment(c: dict) -> ReviewComment:
+    return ReviewComment(
+        id=c["id"],
+        author=(c.get("author") or {}).get("login") or "?",
+        created_at=c.get("createdAt", ""),
+        body=c.get("body", ""),
+        path=c.get("path"),
+        line=c.get("line"),
+    )
+
+
+def _remaining_thread_comments(thread_id: str, after: str | None) -> list[ReviewComment]:
+    """Comments past the first page of one review thread."""
+    comments: list[ReviewComment] = []
+    while True:
+        data = _run_json(
+            [
+                "gh",
+                "api",
+                "graphql",
+                "-f",
+                f"query={_THREAD_COMMENTS_QUERY}",
+                "-F",
+                f"id={thread_id}",
+                "-F",
+                f"after={after}",
+            ]
+        )
+        page = ((data.get("data") or {}).get("node") or {}).get("comments") or {}
+        comments += [_parse_review_comment(c) for c in page.get("nodes") or []]
+        page_info = page.get("pageInfo") or {}
+        if not page_info.get("hasNextPage"):
+            return comments
+        after = page_info.get("endCursor")
 
 
 def review_threads(owner: str, repo: str, number: int) -> list[ReviewThread]:
@@ -223,17 +277,11 @@ def review_threads(owner: str, repo: str, number: int) -> list[ReviewThread]:
         pr = ((data.get("data") or {}).get("repository") or {}).get("pullRequest") or {}
         rt = pr.get("reviewThreads") or {}
         for t in rt.get("nodes") or []:
-            comments = [
-                ReviewComment(
-                    id=c["id"],
-                    author=(c.get("author") or {}).get("login") or "?",
-                    created_at=c.get("createdAt", ""),
-                    body=c.get("body", ""),
-                    path=c.get("path"),
-                    line=c.get("line"),
-                )
-                for c in (t.get("comments") or {}).get("nodes") or []
-            ]
+            comment_page = t.get("comments") or {}
+            comments = [_parse_review_comment(c) for c in comment_page.get("nodes") or []]
+            comment_page_info = comment_page.get("pageInfo") or {}
+            if comment_page_info.get("hasNextPage"):
+                comments += _remaining_thread_comments(t["id"], comment_page_info.get("endCursor"))
             threads.append(
                 ReviewThread(id=t["id"], is_resolved=bool(t.get("isResolved")), comments=comments)
             )

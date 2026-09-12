@@ -204,6 +204,97 @@ def test_review_threads_paginates(fake_cli):
     assert threads[1].is_resolved is True
 
 
+def test_review_threads_paginates_comments_within_a_thread(fake_cli):
+    """A single thread with more than one page of comments -- the outer
+    reviewThreads page has no more pages, but the one thread's own comments
+    connection does, requiring a second, thread-scoped query."""
+    page = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [
+                            {
+                                "id": "T_1",
+                                "isResolved": False,
+                                "comments": {
+                                    "pageInfo": {"hasNextPage": True, "endCursor": "CCURSOR1"},
+                                    "nodes": [
+                                        {
+                                            "id": "C_1",
+                                            "body": "first",
+                                            "createdAt": "2026-01-01T00:00:00Z",
+                                            "path": "a.py",
+                                            "line": 10,
+                                            "author": {"login": "alice"},
+                                        }
+                                    ],
+                                },
+                            }
+                        ],
+                    }
+                }
+            }
+        }
+    }
+    fake_cli.set(
+        [
+            "gh",
+            "api",
+            "graphql",
+            "-f",
+            f"query={gh._REVIEW_THREADS_QUERY}",
+            "-F",
+            "owner=acme",
+            "-F",
+            "repo=widgets",
+            "-F",
+            "pr=7",
+        ],
+        stdout=json.dumps(page),
+    )
+    fake_cli.set(
+        [
+            "gh",
+            "api",
+            "graphql",
+            "-f",
+            f"query={gh._THREAD_COMMENTS_QUERY}",
+            "-F",
+            "id=T_1",
+            "-F",
+            "after=CCURSOR1",
+        ],
+        stdout=json.dumps(
+            {
+                "data": {
+                    "node": {
+                        "comments": {
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            "nodes": [
+                                {
+                                    "id": "C_2",
+                                    "body": "second",
+                                    "createdAt": "2026-01-01T01:00:00Z",
+                                    "path": "a.py",
+                                    "line": 10,
+                                    "author": {"login": "bob"},
+                                }
+                            ],
+                        }
+                    }
+                }
+            }
+        ),
+    )
+
+    threads = gh.review_threads("acme", "widgets", 7)
+    [thread] = threads
+    assert [c.id for c in thread.comments] == ["C_1", "C_2"]
+    assert [c.author for c in thread.comments] == ["alice", "bob"]
+
+
 def test_resolve_thread(fake_cli):
     fake_cli.set(
         [
