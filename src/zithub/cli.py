@@ -375,7 +375,7 @@ def _release_preflight(target_arg: str | None) -> tuple[str, str, list[gh.Releas
     except gh.ZithubError:
         dirty = []
     if dirty:
-        print(_yellow("local  dirty — not included in the release:"))
+        print(_yellow("local  dirty — do not release until everything is committed:"))
         for line in dirty:
             print(f"       {line}")
     else:

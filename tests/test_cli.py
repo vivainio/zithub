@@ -439,7 +439,7 @@ def test_release_bare_dirty_warns_but_passes(fake_cli, monkeypatch, capsys):
     rc = run(["release"])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "dirty" in out
+    assert "do not release until everything is committed" in out
     assert "PREFLIGHT PASS" in out
 
 
