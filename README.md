@@ -24,6 +24,8 @@ zh pr reply      # reply to a review-comment thread, optionally --resolve
 zh pr resolve    # mark thread(s) resolved, by id or --all
 zh pr unresolve  # reopen thread(s)
 
+zh pr check      # target branch, and whether the PR references a ticket
+
 zh pr merge      # merge a PR
 zh pr ship       # merge + delete branch (same as `merge --delete-branch`)
 
@@ -42,6 +44,19 @@ thread's id, then act on it:
 zh pr threads                       # unresolved threads on the current branch's PR
 zh pr reply T_kwDOA... -b "fixed in a1b2c3d" --resolve
 zh pr resolve --all --path src/     # resolve every unresolved thread under src/
+```
+
+`zh pr check` surfaces the two things you'd otherwise have to open the PR
+on the web to eyeball: the base branch it's targeting (no judgment — just
+shown, since only you know whether it's the wrong one), and whether the
+title/body references a ticket at all — a GitHub issue ref (`#123`,
+`Fixes #123`), any URL (covers a Jira/Linear/etc. link), or a bare
+Jira-style key (`ABC-123`, flagged with a suggestion to link it directly).
+Exits non-zero if no reference is found at all:
+
+```
+zh pr check
+zh pr check 42
 ```
 
 `zh pr merge` (and `zh pr ship`, which is the same thing with

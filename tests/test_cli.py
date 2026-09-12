@@ -354,6 +354,44 @@ def test_merge_force_skips_preflight(fake_cli):
 
 
 # ---------------------------------------------------------------------------
+# check — target branch + ticket reference
+
+def test_check_shows_target_and_found_ticket(fake_cli, capsys):
+    fake_cli.set(
+        ["gh", "pr", "view", "--json", _PR_FIELDS],
+        stdout=pr_json(title="Fix widget rendering", body="Fixes #42"),
+    )
+    rc = run(["pr", "check"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "target main  <- feature" in out
+    assert "ticket" in out and "#42" in out
+
+
+def test_check_fails_when_no_ticket_reference(fake_cli, capsys):
+    fake_cli.set(
+        ["gh", "pr", "view", "--json", _PR_FIELDS],
+        stdout=pr_json(title="Fix widget rendering", body="no ticket mentioned here"),
+    )
+    rc = run(["pr", "check"])
+    out, err = capsys.readouterr()
+    assert rc == 1
+    assert "no reference found" in out
+
+
+def test_check_notes_unlinked_jira_key(fake_cli, capsys):
+    fake_cli.set(
+        ["gh", "pr", "view", "--json", _PR_FIELDS],
+        stdout=pr_json(title="Fix widget rendering", body="Implements ABC-123"),
+    )
+    rc = run(["pr", "check"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "ABC-123" in out
+    assert "consider linking" in out
+
+
+# ---------------------------------------------------------------------------
 # release preflight / create
 
 _RUN_LIST_FIELDS = "databaseId,name,status,conclusion,url,headSha,createdAt"

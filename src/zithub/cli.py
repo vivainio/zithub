@@ -11,7 +11,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import gh, versioning
+from . import gh, ticket, versioning
 
 
 def _color(text: str, code: str) -> str:
@@ -128,6 +128,38 @@ def cmd_unresolve(args: argparse.Namespace) -> int:
     except gh.ZithubError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# check — sanity checks beyond CI/review: what branch this targets, and
+# whether it references a ticket, both otherwise only visible by opening
+# the PR on the web
+
+def cmd_check(args: argparse.Namespace) -> int:
+    try:
+        pr = gh.resolve_pr(args.ref)
+    except gh.ZithubError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"pr     #{pr.number} {pr.title}")
+    print(f"       {pr.url}")
+    print(f"target {pr.base_ref_name}  <- {pr.head_ref_name}")
+
+    result = ticket.check_ticket_reference(f"{pr.title}\n{pr.body}")
+    if not result.found:
+        print(
+            _red(
+                "ticket no reference found in title/body — add a GitHub issue "
+                "ref (#123), a tracker URL, or a ticket key"
+            )
+        )
+        return 1
+
+    print(f"ticket {_green(f'{result.kind}: {result.detail}')}")
+    if result.note:
+        print(f"       {_yellow(result.note)}")
     return 0
 
 
@@ -641,6 +673,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_unresolve = pr_sub.add_parser("unresolve", help="reopen review-comment thread(s)")
     p_unresolve.add_argument("thread_id", nargs="+", help="thread id(s), from `zh pr threads`")
     p_unresolve.set_defaults(func=cmd_unresolve)
+
+    p_check = pr_sub.add_parser(
+        "check", help="surface the target branch and check for a linked ticket"
+    )
+    _add_ref_arg(p_check)
+    p_check.set_defaults(func=cmd_check)
 
     p_merge = pr_sub.add_parser(
         "merge",
