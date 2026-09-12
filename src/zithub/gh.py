@@ -313,6 +313,30 @@ def current_commit_sha() -> str:
     return _run(["git", "rev-parse", "HEAD"])
 
 
+def worktree_root() -> str | None:
+    try:
+        return _run(["git", "rev-parse", "--show-toplevel"])
+    except ZithubError:
+        return None
+
+
+def remote_name_with_owner() -> str | None:
+    """"owner/repo" parsed from origin's remote URL, entirely locally — no
+    `gh` call, so it stays fast and works even without `gh` installed or
+    authenticated. Used to key the local-checkout registry (`zh repos`)
+    instead of a `gh repo view` round trip."""
+    url = _origin_url()
+    if url is None:
+        return None
+    url = url.rstrip("/")
+    if url.endswith(".git"):
+        url = url[: -len(".git")]
+    parts = re.split(r"[/:]", url)
+    if len(parts) < 2 or not parts[-1] or not parts[-2]:
+        return None
+    return f"{parts[-2]}/{parts[-1]}"
+
+
 def fetch_all() -> None:
     _run(["git", "fetch", "origin", "--prune", "--tags"])
 

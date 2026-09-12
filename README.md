@@ -32,6 +32,8 @@ zh pr ship       # merge + delete branch (same as `merge --delete-branch`)
 zh release                    # preflight, then commits + the gh command for each next version
 zh release patch/minor/major  # preflight, then just that one bumped version + gh command
 zh release create             # preflight, then actually create at an explicit version
+
+zh repos         # local checkouts zh has seen, most-recently-seen first
 ```
 
 `threads`/`reply`/`resolve`/`unresolve` exist because `gh` has no
@@ -110,6 +112,19 @@ as a failure. So it's also safe to call directly without a prior
 ```
 zh release create v1.3.0 -n "$(cat notes.md)"
 zh release create v2.0.0-rc1 --prerelease --force   # skip the preflight
+```
+
+Every command above (except `repos` itself) also registers the checkout it
+ran in — path, repo, branch — into a local registry at
+`~/.local/share/zithub/repos.jsonl`, ported from wazup's own (a separate
+database, same design). `zh repos` lists what's been seen, letting an
+agent find a local checkout of a repo by name instead of guessing paths or
+re-cloning; two worktrees or clones of the same repo, at different paths,
+show up as separate entries with their own branch:
+
+```
+zh repos          # everything seen, most-recently-seen first
+zh repos zithub   # only checkouts whose repo name or path contains "zithub"
 ```
 
 ## Install

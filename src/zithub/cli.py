@@ -7,11 +7,12 @@ single call (create, close, comment, review, label, reviewer) are left to
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import gh, ticket, versioning
+from . import gh, registry, ticket, versioning
 
 
 def _color(text: str, code: str) -> str:
@@ -639,6 +640,65 @@ def _add_release_create_args(p: argparse.ArgumentParser) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# repos — local-checkout registry, ported from wazup: recorded as a side
+# effect of ordinary zh usage, queried so an agent can find a checkout by
+# name instead of guessing paths or re-cloning
+
+def _display_path(path: str) -> str:
+    home = os.path.expanduser("~")
+    return "~" + path[len(home) :] if path.startswith(home) else path
+
+
+def _relative_age(ts: float) -> str:
+    seconds = max(0.0, time.time() - ts)
+    if seconds < 60:
+        return "just now"
+    minutes = seconds / 60
+    if minutes < 60:
+        return f"{int(minutes)}m ago"
+    hours = minutes / 60
+    if hours < 24:
+        return f"{int(hours)}h ago"
+    days = hours / 24
+    if days < 30:
+        return f"{int(days)}d ago"
+    months = days / 30
+    if months < 12:
+        return f"{int(months)}mo ago"
+    return f"{int(months / 12)}y ago"
+
+
+def cmd_repos(args: argparse.Namespace) -> int:
+    entries = registry.find_seen(args.query) if args.query else registry.list_seen()
+    if not entries:
+        msg = (
+            f"no known checkouts matching '{args.query}'"
+            if args.query
+            else "no known checkouts yet — run zh inside a repo to register it"
+        )
+        print(msg, file=sys.stderr)
+        return 1
+    for e in entries:
+        print(f"{e.repo}  {e.branch}  ({_relative_age(e.last_seen)})  {_dim(_display_path(e.path))}")
+    return 0
+
+
+def _record_repo_seen() -> None:
+    """Best-effort upsert of the current checkout into the `zh repos`
+    registry — local git plumbing only, no `gh` call. No-ops outside a repo
+    or on any failure, same as wazup's version of this."""
+    try:
+        name = gh.remote_name_with_owner()
+        path = gh.worktree_root()
+        if not name or not path:
+            return
+        branch = gh.current_branch()
+    except gh.ZithubError:
+        return
+    registry.record_seen(path, name, branch)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zh", description="batched gh PR actions for AI agents"
@@ -722,13 +782,25 @@ def build_parser() -> argparse.ArgumentParser:
         )
         p_bump.set_defaults(func=cmd_release_bump, part=part)
 
+    p_repos = sub.add_parser(
+        "repos",
+        help="list local checkouts zh has seen, so agents can find one without guessing paths",
+    )
+    p_repos.add_argument(
+        "query", nargs="?", help="only show checkouts whose repo name or path contains this"
+    )
+    p_repos.set_defaults(func=cmd_repos, needs_gh=False)
+
     return parser
 
 
 def main() -> None:
     parser = build_parser()
+    parser.set_defaults(needs_gh=True)
     args = parser.parse_args()
     if not getattr(args, "func", None):
         parser.print_help()
         sys.exit(1)
+    if args.needs_gh:
+        _record_repo_seen()
     sys.exit(args.func(args))

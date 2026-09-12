@@ -726,6 +726,75 @@ def test_release_bump_non_semver_tag_errors(fake_cli, monkeypatch, capsys):
     assert "doesn't look like a plain semver tag" in capsys.readouterr().err
 
 
+# ---------------------------------------------------------------------------
+# repos — local-checkout registry
+
+def test_repos_lists_known_checkouts(monkeypatch, capsys):
+    from zithub import registry
+
+    entries = [registry.RepoEntry(path="/home/v/r/zithub", repo="vivainio/zithub", branch="main", last_seen=0.0)]
+    monkeypatch.setattr(registry, "list_seen", lambda: entries)
+    rc = run(["repos"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "vivainio/zithub" in out
+    assert "main" in out
+
+
+def test_repos_query_filters(monkeypatch):
+    from zithub import registry
+
+    calls = []
+    monkeypatch.setattr(registry, "find_seen", lambda q: calls.append(q) or [])
+    run(["repos", "zithub"])
+    assert calls == ["zithub"]
+
+
+def test_repos_empty_is_an_error(fake_cli, monkeypatch, capsys):
+    from zithub import registry
+
+    monkeypatch.setattr(registry, "list_seen", lambda: [])
+    rc = run(["repos"])
+    assert rc == 1
+    assert "no known checkouts" in capsys.readouterr().err
+
+
+def test_main_records_repo_seen_for_gh_commands(monkeypatch, fake_cli):
+    import zithub.cli as cli_mod
+
+    fake_cli.set(["git", "remote", "get-url", "origin"], stdout="git@github.com:acme/widgets.git")
+    fake_cli.set(["git", "rev-parse", "--show-toplevel"], stdout="/home/v/r/widgets")
+    fake_cli.set(["git", "rev-parse", "--abbrev-ref", "HEAD"], stdout="main")
+
+    recorded = []
+    monkeypatch.setattr(
+        cli_mod.registry, "record_seen", lambda path, repo, branch: recorded.append((path, repo, branch))
+    )
+    monkeypatch.setattr("sys.argv", ["zh", "pr", "check"])
+    fake_cli.set(["gh", "pr", "view", "--json", _PR_FIELDS], stdout=pr_json())
+
+    with pytest.raises(SystemExit):
+        cli_mod.main()
+
+    assert recorded == [("/home/v/r/widgets", "acme/widgets", "main")]
+
+
+def test_main_does_not_record_for_repos_command(monkeypatch, fake_cli):
+    import zithub.cli as cli_mod
+
+    recorded = []
+    monkeypatch.setattr(
+        cli_mod.registry, "record_seen", lambda path, repo, branch: recorded.append((path, repo, branch))
+    )
+    monkeypatch.setattr(cli_mod.registry, "list_seen", lambda: [])
+    monkeypatch.setattr("sys.argv", ["zh", "repos"])
+
+    with pytest.raises(SystemExit):
+        cli_mod.main()
+
+    assert recorded == []
+
+
 def test_merge_pending_without_wait_blocks(fake_cli, capsys):
     fake_cli.set(
         ["gh", "pr", "view", "--json", _PR_FIELDS],
