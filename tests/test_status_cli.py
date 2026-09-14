@@ -51,8 +51,8 @@ def repo_json() -> str:
     )
 
 
-def _since() -> str:
-    return (date.today() - timedelta(days=7)).isoformat()
+def _since(days: int = 7) -> str:
+    return (date.today() - timedelta(days=days)).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +243,7 @@ def test_my_lists_open_prs_in_repo(fake_cli, capsys):
 
 def test_my_outside_repo_shows_recent_activity(fake_cli, capsys):
     fake_cli.fail(["gh", "repo", "view", "--json", _REPO_FIELDS])
-    since = _since()
+    since = _since(30)
     fake_cli.set(
         [
             "gh",
@@ -251,10 +251,10 @@ def test_my_outside_repo_shows_recent_activity(fake_cli, capsys):
             "prs",
             "--author",
             "@me",
-            "--updated",
-            f">={since}",
-            "--sort",
-            "updated",
+            "--state",
+            "open",
+            "--limit",
+            "200",
             "--json",
             "number,title,url,state,isDraft,updatedAt,repository",
         ],
@@ -272,12 +272,33 @@ def test_my_outside_repo_shows_recent_activity(fake_cli, capsys):
             ]
         ),
     )
+    fake_cli.set(
+        [
+            "gh",
+            "search",
+            "prs",
+            "--author",
+            "@me",
+            "--state",
+            "closed",
+            "--updated",
+            f">={since}",
+            "--sort",
+            "updated",
+            "--limit",
+            "200",
+            "--json",
+            "number,title,url,state,isDraft,updatedAt,repository",
+        ],
+        stdout=json.dumps([]),
+    )
 
     rc = run(["my"])
     out = capsys.readouterr().out
     assert rc == 0
-    assert f"your PRs with activity since {since}:" in out
-    assert "other/repo  #11 Cross-repo fix" in out
+    assert f"your open PRs across all repos, plus closed/merged since {since}:" in out
+    assert "other/repo" in out
+    assert "#11 Cross-repo fix" in out
 
 
 def test_review_lists_prs_awaiting_review(fake_cli, capsys):
@@ -317,7 +338,8 @@ def test_review_lists_prs_awaiting_review(fake_cli, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert f"updated since {since}" in out
-    assert "acme/widgets  #5 Needs review" in out
+    assert "acme/widgets" in out
+    assert "#5 Needs review" in out
 
 
 def test_issues_lists_open_issues_in_repo(fake_cli, capsys):
