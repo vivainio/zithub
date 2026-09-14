@@ -1053,12 +1053,13 @@ def _print_commits(previous_tag: str | None) -> None:
 
 
 def _gh_release_create_hint(tag: str, target_arg: str | None) -> str:
-    """The literal `gh release create` command to run once notes are
-    written. Points at plain `gh`, not `zh release create` — the preflight
-    that command would redo (including the CI wait) was just run right
-    here, so re-running it a moment later just to create is wasted work."""
+    """The literal command to run once notes are written. Points at
+    `zh release create` without `--preflight` — the preflight was just run
+    right here, and skipping it (the default) means creating doesn't redo
+    it, while still getting the publish-workflow wait `zh` adds over plain
+    `gh release create`."""
     target_flag = f" --target {target_arg}" if target_arg else ""
-    return f'gh release create {tag} --notes "..." --title {tag}{target_flag}'
+    return f'zh release create {tag} --notes "..." --title {tag}{target_flag}'
 
 
 def cmd_release(args: argparse.Namespace) -> int:
@@ -1171,7 +1172,7 @@ def _finish_release(tag: str, target: str | None, args: argparse.Namespace) -> i
 
 def cmd_release_create(args: argparse.Namespace) -> int:
     target = args.target
-    if not args.force:
+    if args.preflight:
         result = _release_preflight(args.target)
         if result is None:
             return 1
@@ -1233,7 +1234,9 @@ def _add_release_create_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("-d", "--draft", action="store_true")
     p.add_argument("-p", "--prerelease", action="store_true")
     p.add_argument(
-        "--force", action="store_true", help="skip the preflight and create immediately"
+        "--preflight",
+        action="store_true",
+        help="run the pre-release checks (CI, sync, dirty) before creating",
     )
 
 
@@ -1377,7 +1380,7 @@ def build_parser() -> argparse.ArgumentParser:
     release_sub = release.add_subparsers(dest="release_command")
 
     p_release_create = release_sub.add_parser(
-        "create", help="preflight, then create the release at an explicit version"
+        "create", help="create the release at an explicit version (add --preflight to check first)"
     )
     p_release_create.add_argument("tag", help="release tag/version, e.g. v1.3.0")
     _add_release_create_args(p_release_create)

@@ -111,31 +111,30 @@ way, since the tag points at HEAD.
 
 Past the preflight it's read-only: it never creates anything itself. It
 shows the commit log a release's notes get written from, and prints the
-exact `gh release create ...` command to run once notes are ready — not
-`zh release create`, since the preflight (including the CI wait) was just
-run right here and redoing it a moment later would be wasted work.
+exact `zh release create ...` command to run once notes are ready. That
+command skips its own preflight by default, so running it right after
+`zh release` doesn't redo the CI wait that was just run here.
 `patch`/`minor`/`major` fetch the latest release tag and compute one
 specific bump; bare `zh release` shows all three:
 
 ```
-zh release                          # -> gh release create <next patch/minor/major> ...
+zh release                          # -> zh release create <next patch/minor/major> ...
 zh release patch                    # -> just the patch bump
 zh release patch --target release-2.0
 ```
 
-`zh release create` is the one command that actually publishes — it runs
-the same preflight itself first (unless `--force`), requires release notes
-(`-n`/`--notes` or `-F`/`--notes-file` — one of them, always), and after
-creating the GitHub release it also polls for and waits on any workflow
-run(s) triggered by that release (e.g. a PyPI publish job), reporting
-success or failure instead of leaving that for the caller to check
-separately. A repo with no such workflow just proceeds — it's not treated
-as a failure. So it's also safe to call directly without a prior
-`zh release`:
+`zh release create` is the one command that actually publishes — it
+requires release notes (`-n`/`--notes` or `-F`/`--notes-file` — one of
+them, always), and after creating the GitHub release it also polls for and
+waits on any workflow run(s) triggered by that release (e.g. a PyPI
+publish job), reporting success or failure instead of leaving that for the
+caller to check separately. A repo with no such workflow just proceeds —
+it's not treated as a failure. The preflight is opt-in via `--preflight`,
+for when you're calling it directly without a prior `zh release`:
 
 ```
 zh release create v1.3.0 -n "$(cat notes.md)"
-zh release create v2.0.0-rc1 --prerelease --force   # skip the preflight
+zh release create v2.0.0-rc1 --prerelease --preflight   # check first, since there was no prior `zh release`
 ```
 
 Every command above that needs `gh` also registers the checkout it ran in

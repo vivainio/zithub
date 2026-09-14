@@ -523,7 +523,7 @@ def test_release_bare_pass_no_previous_release(fake_cli, monkeypatch, capsys):
     assert rc == 0
     assert "PREFLIGHT PASS" in out
     assert "no previous release" in out
-    assert "gh release create <version>" in out
+    assert "zh release create <version>" in out
 
 
 def test_release_bare_suggests_bumps(fake_cli, monkeypatch, capsys):
@@ -539,9 +539,9 @@ def test_release_bare_suggests_bumps(fake_cli, monkeypatch, capsys):
     rc = run(["release"])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "gh release create v1.2.4 --notes" in out and "(patch)" in out
-    assert "gh release create v1.3.0 --notes" in out and "(minor)" in out
-    assert "gh release create v2.0.0 --notes" in out and "(major)" in out
+    assert "zh release create v1.2.4 --notes" in out and "(patch)" in out
+    assert "zh release create v1.3.0 --notes" in out and "(minor)" in out
+    assert "zh release create v2.0.0 --notes" in out and "(major)" in out
 
 
 def test_release_bare_branch_mismatch(fake_cli, capsys):
@@ -620,7 +620,7 @@ def _set_no_publish_workflow(fake_cli):
     )
 
 
-def test_release_create_runs_preflight_then_creates(fake_cli, monkeypatch, capsys):
+def test_release_create_preflight_flag_runs_preflight_then_creates(fake_cli, monkeypatch, capsys):
     import zithub.cli as cli_mod
 
     monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
@@ -631,13 +631,13 @@ def test_release_create_runs_preflight_then_creates(fake_cli, monkeypatch, capsy
         stdout="https://github.com/acme/widgets/releases/tag/v1.0.0",
     )
     _set_no_publish_workflow(fake_cli)
-    rc = run(["release", "create", "v1.0.0", "-n", "first release", "-t", "v1.0.0"])
+    rc = run(["release", "create", "v1.0.0", "-n", "first release", "-t", "v1.0.0", "--preflight"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "released:" in out
 
 
-def test_release_create_force_skips_preflight(fake_cli, monkeypatch):
+def test_release_create_skips_preflight_by_default(fake_cli, monkeypatch):
     import zithub.cli as cli_mod
 
     monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
@@ -646,7 +646,7 @@ def test_release_create_force_skips_preflight(fake_cli, monkeypatch):
         stdout="https://github.com/acme/widgets/releases/tag/v1.0.0",
     )
     _set_no_publish_workflow(fake_cli)
-    rc = run(["release", "create", "v1.0.0", "-n", "notes", "--force"])
+    rc = run(["release", "create", "v1.0.0", "-n", "notes"])
     assert rc == 0
 
 
@@ -676,7 +676,7 @@ def test_release_create_waits_for_publish_workflow_success(fake_cli, monkeypatch
             ]
         ),
     )
-    rc = run(["release", "create", "v1.0.0", "-n", "notes", "--force"])
+    rc = run(["release", "create", "v1.0.0", "-n", "notes"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "publish success (Publish to PyPI)" in out
@@ -709,7 +709,7 @@ def test_release_create_reports_publish_workflow_failure(fake_cli, monkeypatch, 
         ),
     )
     fake_cli.set(["gh", "run", "view", "1", "--log-failed"], stdout="pypi rejected upload")
-    rc = run(["release", "create", "v1.0.0", "-n", "notes", "--force"])
+    rc = run(["release", "create", "v1.0.0", "-n", "notes"])
     out, err = capsys.readouterr()
     assert rc == 1
     assert "released:" in out
@@ -718,7 +718,7 @@ def test_release_create_reports_publish_workflow_failure(fake_cli, monkeypatch, 
 
 def test_release_create_requires_notes(fake_cli):
     with pytest.raises(SystemExit) as exc:
-        run(["release", "create", "v1.0.0", "--force"])
+        run(["release", "create", "v1.0.0"])
     assert exc.value.code == 2
 
 
@@ -743,7 +743,7 @@ def test_release_patch_shows_computed_version_and_gh_hint(fake_cli, monkeypatch,
     out = capsys.readouterr().out
     assert rc == 0
     assert "v1.2.3 -> v1.2.4" in out
-    assert 'gh release create v1.2.4 --notes "..." --title v1.2.4' in out
+    assert 'zh release create v1.2.4 --notes "..." --title v1.2.4' in out
 
 
 def test_release_minor_never_creates(fake_cli, monkeypatch, capsys):
@@ -760,7 +760,7 @@ def test_release_minor_never_creates(fake_cli, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "v1.2.3 -> v1.3.0" in out
-    assert 'gh release create v1.3.0 --notes "..." --title v1.3.0' in out
+    assert 'zh release create v1.3.0 --notes "..." --title v1.3.0' in out
     assert not any(c[:3] == ["gh", "release", "create"] for c in fake_cli.calls)
 
 
