@@ -1,7 +1,7 @@
 [project]
 name = "zithub"
 version = "0.1.0"
-description = "Batched gh CLI actions for PR workflows: merge preflight, review-thread reply/resolve, and more in one call"
+description = "What's up with this repo, right now, plus batched gh PR/release actions: status, CI, merge preflight, review-thread reply/resolve, and more"
 readme = "README.md"
 authors = [
     { name = "Ville Vainio", email = "vivainio@gmail.com" }

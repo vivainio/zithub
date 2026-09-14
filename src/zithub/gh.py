@@ -10,10 +10,15 @@ them.
 
 from __future__ import annotations
 
+import functools
 import json
+import os
 import re
 import subprocess
+import time
+import threading
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 
 _FAILED_CONCLUSIONS = {"failure", "timed_out", "cancelled", "startup_failure", "action_required"}
 _PENDING_STATUSES = {"in_progress", "queued", "pending", "waiting", "requested"}
@@ -23,9 +28,11 @@ class ZithubError(Exception):
     """Raised when a required CLI is missing or a command fails."""
 
 
-def _run_result(args: list[str]) -> subprocess.CompletedProcess:
+def _run_result(
+    args: list[str], env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess:
     try:
-        result = subprocess.run(args, capture_output=True, text=True, check=False)
+        result = subprocess.run(args, capture_output=True, text=True, check=False, env=env)
     except FileNotFoundError as exc:
         raise ZithubError(f"`{args[0]}` not found on PATH") from exc
     if result.returncode != 0:
@@ -33,8 +40,8 @@ def _run_result(args: list[str]) -> subprocess.CompletedProcess:
     return result
 
 
-def _run(args: list[str]) -> str:
-    return _run_result(args).stdout.strip()
+def _run(args: list[str], env: dict[str, str] | None = None) -> str:
+    return _run_result(args, env=env).stdout.strip()
 
 
 def _run_raw(args: list[str]) -> str:
@@ -79,6 +86,16 @@ def repo_info() -> RepoInfo:
         url=data["url"],
         default_branch=(data.get("defaultBranchRef") or {}).get("name", "?"),
     )
+
+
+def current_repo() -> RepoInfo | None:
+    """Like repo_info(), but None instead of raising when cwd isn't a GitHub
+    repo — for commands (`my`, `issues`) that work either scoped to the
+    current repo or cross-repo, depending on whether there is one."""
+    try:
+        return repo_info()
+    except ZithubError:
+        return None
 
 
 @dataclass
@@ -150,6 +167,16 @@ def resolve_pr(ref: str | None = None) -> PullRequest:
         checks=checks,
         body=data.get("body") or "",
     )
+
+
+def current_pr(ref: str | None = None) -> PullRequest | None:
+    """Like resolve_pr(), but None instead of raising when there's no such
+    PR — for status commands that fall back to CI-runs-for-a-branch instead
+    of erroring out."""
+    try:
+        return resolve_pr(ref)
+    except ZithubError:
+        return None
 
 
 @dataclass
@@ -646,3 +673,658 @@ def create_release(
     if prerelease:
         cmd.append("--prerelease")
     return _run(cmd)
+
+
+# ---------------------------------------------------------------------------
+# status/ci — read-side reporting ported from wazup, so zh doesn't require it
+# installed alongside for a basic "what's up with this repo" view.
+
+def is_linked_worktree() -> bool:
+    """True if the current checkout is a linked worktree (`git worktree
+    add`), not a repo's main checkout — the two share a common git dir but
+    a linked worktree gets its own private one under
+    `<common>/worktrees/<name>`, so the two paths differ only there."""
+    try:
+        git_dir, common_dir = _run(
+            ["git", "rev-parse", "--git-dir", "--git-common-dir"]
+        ).splitlines()
+    except ZithubError:
+        return False
+    return os.path.realpath(git_dir) != os.path.realpath(common_dir)
+
+
+def commits_ahead_of(ref: str) -> int | None:
+    """How many commits HEAD has that `ref` doesn't. None if `ref` doesn't
+    exist locally (e.g. no `origin/<branch>` without a fetch yet)."""
+    try:
+        return int(_run(["git", "rev-list", "--count", f"{ref}..HEAD"]))
+    except ZithubError:
+        return None
+
+
+@dataclass
+class ChangedFile:
+    status: str  # single-letter: M, A, D, R, C, U
+    path: str
+
+
+@dataclass
+class LocalStatus:
+    ahead: int | None
+    behind: int | None
+    changed_files: list[ChangedFile]
+    untracked_count: int
+
+
+def start_background_fetch() -> threading.Thread:
+    """Kick off `git fetch` on its own thread so `local_status()` can report
+    ahead/behind against origin without a stale remote-tracking ref. Runs
+    concurrently with the gh API calls the caller is about to make, so its
+    latency overlaps with work that's already happening rather than adding
+    to it — join the returned thread before calling `local_status()`.
+    Failure (offline, no fetch access, etc.) is a silent no-op: this is
+    best-effort freshness, not a hard requirement. Runs with prompts
+    disabled (GIT_TERMINAL_PROMPT=0, batch-mode SSH) so a repo with no
+    cached credentials fails fast instead of blocking forever on a prompt
+    nothing can answer — there's no TTY attached to a background thread we
+    `join()` on before printing."""
+
+    env = {
+        **os.environ,
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_SSH_COMMAND": os.environ.get("GIT_SSH_COMMAND", "ssh") + " -o BatchMode=yes",
+    }
+
+    def fetch() -> None:
+        try:
+            _run(["git", "fetch"], env=env)
+        except ZithubError:
+            pass
+
+    thread = threading.Thread(target=fetch, daemon=True)
+    thread.start()
+    return thread
+
+
+def local_status() -> LocalStatus:
+    """Unpushed/behind commit counts (None if no upstream), tracked changes
+    (staged or unstaged), and a separate untracked-file count. Untracked
+    files are kept out of `changed_files` since they're often noise (scratch
+    files, build output) rather than something you forgot to commit."""
+    try:
+        data = _run(["git", "status", "--porcelain=v2", "--branch"])
+    except ZithubError:
+        return LocalStatus(ahead=None, behind=None, changed_files=[], untracked_count=0)
+
+    ahead = None
+    behind = None
+    changed: list[ChangedFile] = []
+    untracked_count = 0
+    for line in data.splitlines():
+        if line.startswith("# branch.ab "):
+            _, _, ahead_str, behind_str = line.split()
+            ahead = int(ahead_str.lstrip("+"))
+            behind = int(behind_str.lstrip("-"))
+        elif line.startswith("1 "):
+            xy, path = line.split(" ", 8)[1], line.split(" ", 8)[8]
+            changed.append(ChangedFile(status=xy[0] if xy[0] != "." else xy[1], path=path))
+        elif line.startswith("2 "):
+            xy, rest = line.split(" ", 9)[1], line.split(" ", 9)[9]
+            path = rest.split("\t", 1)[0]
+            changed.append(ChangedFile(status=xy[0] if xy[0] != "." else xy[1], path=path))
+        elif line.startswith("u "):
+            path = line.split(" ", 10)[10]
+            changed.append(ChangedFile(status="U", path=path))
+        elif line.startswith("? "):
+            untracked_count += 1
+
+    return LocalStatus(
+        ahead=ahead, behind=behind, changed_files=changed, untracked_count=untracked_count
+    )
+
+
+@dataclass
+class BranchInfo:
+    name: str
+    relative_date: str
+
+
+def local_branches_by_recency(exclude: set[str] | None = None) -> list[BranchInfo]:
+    """All local branches, most recently committed to first."""
+    exclude = exclude or set()
+    try:
+        data = _run(
+            [
+                "git",
+                "for-each-ref",
+                "refs/heads/",
+                "--sort=-committerdate",
+                "--format=%(refname:short)\t%(committerdate:relative)",
+            ]
+        )
+    except ZithubError:
+        return []
+
+    branches = []
+    for line in data.splitlines():
+        name, _, relative_date = line.partition("\t")
+        if name and name not in exclude:
+            branches.append(BranchInfo(name=name, relative_date=relative_date))
+    return branches
+
+
+def is_orphaned_worktree_branch_name(name: str) -> bool:
+    """True for a `worktree/`-prefixed branch name (herdr's convention for
+    throwaway worktree branches). Only meaningful for branches that aren't
+    currently checked out in a live worktree (those are handled separately)
+    — a match here means the worktree was removed but the branch it
+    generated was left behind."""
+    return name.startswith("worktree/")
+
+
+def worktree_branches() -> dict[str, str]:
+    """Map local branch name -> worktree path, for branches checked out in a
+    worktree (including the current one)."""
+    try:
+        data = _run(["git", "worktree", "list", "--porcelain"])
+    except ZithubError:
+        return {}
+
+    result: dict[str, str] = {}
+    path: str | None = None
+    for line in data.splitlines():
+        if line.startswith("worktree "):
+            path = line[len("worktree ") :]
+        elif line.startswith("branch refs/heads/") and path is not None:
+            result[line[len("branch refs/heads/") :]] = path
+    return result
+
+
+@dataclass
+class WorktreeInfo:
+    branch: str
+    path: str
+    relative_date: str
+    unmerged: int | None
+    dirty: bool
+
+
+def worktree_info(exclude_branch: str, default_ref: str | None = None) -> list[WorktreeInfo]:
+    """Other worktrees' branches, most recently committed to first. If
+    `default_ref` is given (e.g. "origin/main"), each entry also reports how
+    many commits it has that aren't reachable from that ref — 0 means it's
+    fully merged and the worktree is safe to prune. None (rather than a
+    count) means it couldn't be determined, e.g. `default_ref` doesn't exist
+    locally yet."""
+    entries: list[tuple[int, WorktreeInfo]] = []
+    for branch, path in worktree_branches().items():
+        if branch == exclude_branch:
+            continue
+        try:
+            data = _run(["git", "log", "-1", "--format=%ct\t%cr", branch])
+        except ZithubError:
+            continue
+        timestamp, _, relative_date = data.partition("\t")
+
+        unmerged = None
+        if default_ref is not None:
+            try:
+                unmerged = int(_run(["git", "rev-list", "--count", f"{default_ref}..{branch}"]))
+            except ZithubError:
+                pass
+
+        try:
+            dirty = bool(_run(["git", "-C", path, "status", "--porcelain"]))
+        except ZithubError:
+            dirty = False
+
+        entries.append(
+            (
+                int(timestamp),
+                WorktreeInfo(
+                    branch=branch,
+                    path=path,
+                    relative_date=relative_date,
+                    unmerged=unmerged,
+                    dirty=dirty,
+                ),
+            )
+        )
+    entries.sort(key=lambda e: e[0], reverse=True)
+    return [w for _, w in entries]
+
+
+@dataclass
+class BranchPr:
+    number: int
+    url: str
+    state: str
+    is_draft: bool
+
+
+def open_prs_by_branch() -> dict[str, BranchPr]:
+    """One call to map every open PR's head branch to its PR, for cheap lookup."""
+    try:
+        data = _run_json(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--json",
+                "number,url,state,isDraft,headRefName",
+                "--limit",
+                "100",
+            ]
+        )
+    except ZithubError:
+        return {}
+    return {
+        p["headRefName"]: BranchPr(
+            number=p["number"], url=p["url"], state=p["state"], is_draft=p["isDraft"]
+        )
+        for p in data
+    }
+
+
+_RUNNING_STATUSES = {"queued", "in_progress", "waiting", "pending", "requested"}
+_RECENT_OTHER_RUN_WINDOW_SECONDS = 60 * 60
+
+
+def _parse_utc_iso(ts: str | None) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def run_age_minutes(created_at: str | None) -> int | None:
+    """Minutes since a workflow run started — used to show "Nm ago" instead
+    of a redundant link on a run that already succeeded."""
+    created = _parse_utc_iso(created_at)
+    if created is None:
+        return None
+    return int((datetime.now(timezone.utc) - created).total_seconds() // 60)
+
+
+def recent_other_runs(limit: int = 20) -> list[WorkflowRun]:
+    """Workflow runs anywhere in the repo that are still active, or
+    completed within the last hour — not scoped to a branch, since a
+    release-triggered run's headBranch is the tag, not the branch whose
+    push triggered the CI run above, so `--branch` filtering misses it
+    entirely. The recency window keeps this from resurfacing every
+    completed run in the repo's history on every invocation."""
+    data = _run_json(["gh", "run", "list", "--limit", str(limit), "--json", _RUN_LIST_FIELDS])
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=_RECENT_OTHER_RUN_WINDOW_SECONDS)
+    runs = []
+    for r in data:
+        if (r.get("status") or "").lower() not in _RUNNING_STATUSES:
+            created_at = _parse_utc_iso(r.get("createdAt"))
+            if created_at is None or created_at < cutoff:
+                continue
+        runs.append(_workflow_run_from_json(r))
+    return runs
+
+
+@dataclass
+class PullRequestSummary:
+    number: int
+    title: str
+    url: str
+    state: str
+    is_draft: bool
+    updated_at: str
+    repo: str | None = None
+
+
+def my_open_prs_in_repo() -> list[PullRequestSummary]:
+    data = _run_json(
+        ["gh", "pr", "list", "--author", "@me", "--json", "number,title,url,state,isDraft,updatedAt"]
+    )
+    return [
+        PullRequestSummary(
+            number=p["number"],
+            title=p["title"],
+            url=p["url"],
+            state=p["state"],
+            is_draft=p["isDraft"],
+            updated_at=p["updatedAt"],
+        )
+        for p in data
+    ]
+
+
+_SEARCH_PR_FIELDS = "number,title,url,state,isDraft,updatedAt,repository"
+# GitHub search caps a single query's results; 200 comfortably covers a
+# personal open-PR count without needing pagination.
+_SEARCH_PR_LIMIT = "200"
+
+
+def _pr_summary(p: dict) -> PullRequestSummary:
+    return PullRequestSummary(
+        number=p["number"],
+        title=p["title"],
+        url=p["url"],
+        state=p["state"],
+        is_draft=p["isDraft"],
+        updated_at=p["updatedAt"],
+        repo=p.get("repository", {}).get("nameWithOwner"),
+    )
+
+
+def my_recent_prs(since: str) -> list[PullRequestSummary]:
+    # Two separate queries, not one `--updated >=since` search: a single
+    # query sorted by "updated" across all states/repos gets dominated by
+    # merge/close churn in busy repos, silently pushing older-but-still-open
+    # PRs in quieter repos past the (default 30, here 200) result cap. Open
+    # PRs are always relevant regardless of last-touched date, so they're
+    # fetched unconditionally; the date filter only trims the closed/merged
+    # side, which is shown as recent-activity context.
+    open_data = _run_json(
+        [
+            "gh",
+            "search",
+            "prs",
+            "--author",
+            "@me",
+            "--state",
+            "open",
+            "--limit",
+            _SEARCH_PR_LIMIT,
+            "--json",
+            _SEARCH_PR_FIELDS,
+        ]
+    )
+    closed_data = _run_json(
+        [
+            "gh",
+            "search",
+            "prs",
+            "--author",
+            "@me",
+            "--state",
+            "closed",
+            "--updated",
+            f">={since}",
+            "--sort",
+            "updated",
+            "--limit",
+            _SEARCH_PR_LIMIT,
+            "--json",
+            _SEARCH_PR_FIELDS,
+        ]
+    )
+    return [_pr_summary(p) for p in open_data] + [_pr_summary(p) for p in closed_data]
+
+
+def prs_awaiting_my_review(since: str) -> list[PullRequestSummary]:
+    data = _run_json(
+        [
+            "gh",
+            "search",
+            "prs",
+            "--review-requested",
+            "@me",
+            "--state",
+            "open",
+            "--updated",
+            f">={since}",
+            "--sort",
+            "updated",
+            "--json",
+            "number,title,url,state,isDraft,updatedAt,repository",
+        ]
+    )
+    return [
+        PullRequestSummary(
+            number=p["number"],
+            title=p["title"],
+            url=p["url"],
+            state=p["state"],
+            is_draft=p["isDraft"],
+            updated_at=p["updatedAt"],
+            repo=p.get("repository", {}).get("nameWithOwner"),
+        )
+        for p in data
+    ]
+
+
+@dataclass
+class IssueSummary:
+    number: int
+    title: str
+    url: str
+    state: str
+    updated_at: str
+    repo: str | None = None
+
+
+def my_open_issues_in_repo() -> list[IssueSummary]:
+    data = _run_json(
+        ["gh", "issue", "list", "--assignee", "@me", "--json", "number,title,url,state,updatedAt"]
+    )
+    return [
+        IssueSummary(
+            number=i["number"],
+            title=i["title"],
+            url=i["url"],
+            state=i["state"],
+            updated_at=i["updatedAt"],
+        )
+        for i in data
+    ]
+
+
+def my_open_issues(since: str) -> list[IssueSummary]:
+    data = _run_json(
+        [
+            "gh",
+            "search",
+            "issues",
+            "--assignee",
+            "@me",
+            "--state",
+            "open",
+            "--updated",
+            f">={since}",
+            "--sort",
+            "updated",
+            "--json",
+            "number,title,url,state,updatedAt,repository",
+        ]
+    )
+    return [
+        IssueSummary(
+            number=i["number"],
+            title=i["title"],
+            url=i["url"],
+            state=i["state"],
+            updated_at=i["updatedAt"],
+            repo=i.get("repository", {}).get("nameWithOwner"),
+        )
+        for i in data
+    ]
+
+
+# ---------------------------------------------------------------------------
+# failure log tails for `--why` — separate from run_failure_log() above,
+# which fetches by a known databaseId (release/merge preflight always have
+# one already). These take a PR check's detailsUrl instead (a job-level or
+# bare run-level Actions URL) and cache the fetched log to disk, since PR
+# checks get re-fetched on every repo visit rather than once per release cut.
+
+_RUN_JOB_URL_RE = re.compile(r"/actions/runs/(\d+)/job/(\d+)")
+_RUN_URL_RE = re.compile(r"/actions/runs/(\d+)")
+_JOB_FAILED_CONCLUSIONS = {"failure", "timed_out", "startup_failure"}
+_LOG_LINE_RE = re.compile(r"^[^\t]*\t[^\t]*\t\S+Z\s?")
+_LOG_CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+
+
+def _log_cache_dir() -> str:
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    return os.path.join(base, "zithub", "logs")
+
+
+def _log_cache_path(run_id: str, job_id: str) -> str:
+    return os.path.join(_log_cache_dir(), f"{run_id}-{job_id}.log")
+
+
+def _prune_log_cache() -> None:
+    """Drop cached logs older than a week, so the cache doesn't grow
+    forever. Only runs on a cache miss (not every read), since that's
+    already the slow path."""
+    cache_dir = _log_cache_dir()
+    cutoff = time.time() - _LOG_CACHE_MAX_AGE_SECONDS
+    try:
+        entries = os.scandir(cache_dir)
+    except OSError:
+        return
+    with entries:
+        for entry in entries:
+            try:
+                if entry.stat().st_mtime < cutoff:
+                    os.remove(entry.path)
+            except OSError:
+                pass
+
+
+def _job_log_tail(run_id: str, job_id: str, lines: int) -> str | None:
+    """A job's log is only fetched once we already know it's in a terminal
+    (failed) state, so its content is immutable — safe to cache to disk
+    forever, keyed by run/job id, instead of re-fetching on every --why."""
+    cache_path = _log_cache_path(run_id, job_id)
+    try:
+        with open(cache_path, encoding="utf-8") as f:
+            raw = f.read()
+    except OSError:
+        try:
+            raw = _run(["gh", "run", "view", run_id, "--job", job_id, "--log-failed"])
+        except ZithubError:
+            return None
+        try:
+            os.makedirs(_log_cache_dir(), exist_ok=True)
+            with open(cache_path, "w", encoding="utf-8") as f:
+                f.write(raw)
+            _prune_log_cache()
+        except OSError:
+            pass
+
+    cleaned = [_LOG_LINE_RE.sub("", line) for line in raw.splitlines() if line.strip()]
+    if not cleaned:
+        return None
+
+    error_idx = next(
+        (i for i in range(len(cleaned) - 1, -1, -1) if "##[error]" in cleaned[i]),
+        len(cleaned) - 1,
+    )
+    start = max(0, error_idx - lines + 1)
+    return "\n".join(cleaned[start : error_idx + 1])
+
+
+@functools.lru_cache(maxsize=None)
+def _run_jobs(run_id: str) -> tuple[dict, ...]:
+    """Cached: a PR's checks are usually jobs of the same workflow run, so
+    without this, listing N failed checks from one run would re-fetch the
+    identical job list N times."""
+    try:
+        return tuple(_run_json(["gh", "run", "view", run_id, "--json", "jobs"])["jobs"])
+    except ZithubError:
+        return ()
+
+
+def _find_failed_job(run_id: str) -> dict | None:
+    return next(
+        (
+            j
+            for j in _run_jobs(run_id)
+            if (j.get("conclusion") or "").lower() in _JOB_FAILED_CONCLUSIONS
+        ),
+        None,
+    )
+
+
+def failure_log_tail(details_url: str | None, lines: int = 25) -> str | None:
+    """Best-effort tail of a failed GitHub Actions job's log, ending at the
+    error. Accepts either a job-level detailsUrl (from a PR check) or a bare
+    run-level URL (from `gh run list`, which has no job id) — for the
+    latter, the failed job is resolved via `gh run view --json jobs`."""
+    if not details_url:
+        return None
+
+    job_match = _RUN_JOB_URL_RE.search(details_url)
+    if job_match:
+        run_id, job_id = job_match.groups()
+    else:
+        run_match = _RUN_URL_RE.search(details_url)
+        if not run_match:
+            return None
+        run_id = run_match.group(1)
+        failed_job = _find_failed_job(run_id)
+        if failed_job is None:
+            return None
+        job_id = str(failed_job["databaseId"])
+
+    return _job_log_tail(run_id, job_id, lines)
+
+
+def _duration(started: str | None, completed: str | None) -> str | None:
+    if not started or not completed:
+        return None
+    try:
+        start = datetime.fromisoformat(started.replace("Z", "+00:00"))
+        end = datetime.fromisoformat(completed.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return f"{int((end - start).total_seconds())}s"
+
+
+def _failed_step_summaries(job: dict) -> list[str]:
+    summaries = []
+    for s in job.get("steps") or []:
+        if (s.get("conclusion") or "").lower() not in _JOB_FAILED_CONCLUSIONS:
+            continue
+        dur = _duration(s.get("startedAt"), s.get("completedAt"))
+        summaries.append(f"{s['name']} ({dur})" if dur else s["name"])
+    return summaries
+
+
+def failed_steps_summary(details_url: str | None) -> str | None:
+    """One-line summary of what failed — job/step metadata only, no log
+    fetch, so it's cheap enough to show by default (not gated behind --why).
+    Accepts a job-level or bare run-level Actions URL, same as
+    failure_log_tail.
+
+    Normally this names the failed step(s), each with how long it ran
+    before failing. If no individual step is marked failed (the job died
+    some other way - cancelled, infra failure), falls back to how far the
+    job got: how many steps completed and how long it ran - still useful
+    context, and still free of any extra fetch beyond the job/step list
+    already retrieved."""
+    if not details_url:
+        return None
+
+    job_match = _RUN_JOB_URL_RE.search(details_url)
+    if job_match:
+        run_id, job_id = job_match.groups()
+        job = next((j for j in _run_jobs(run_id) if str(j.get("databaseId")) == job_id), None)
+    else:
+        run_match = _RUN_URL_RE.search(details_url)
+        if not run_match:
+            return None
+        job = _find_failed_job(run_match.group(1))
+
+    if job is None:
+        return None
+
+    steps = _failed_step_summaries(job)
+    if steps:
+        return f"{job['name']}: {', '.join(steps)}"
+
+    all_steps = job.get("steps") or []
+    completed = sum(1 for s in all_steps if s.get("status") == "completed")
+    dur = _duration(job.get("startedAt"), job.get("completedAt"))
+    if not all_steps:
+        return job["name"]
+    progress = f"stopped after {completed}/{len(all_steps)} steps"
+    return f"{job['name']} ({progress}, {dur})" if dur else f"{job['name']} ({progress})"

@@ -854,6 +854,7 @@ def test_main_records_repo_seen_for_gh_commands(monkeypatch, fake_cli):
     monkeypatch.setattr(
         cli_mod.registry, "record_seen", lambda path, repo, branch: recorded.append((path, repo, branch))
     )
+    monkeypatch.setattr(cli_mod.gh, "ensure_gh_account_for_repo", lambda: None)
     monkeypatch.setattr("sys.argv", ["zh", "pr", "check"])
     fake_cli.set(["gh", "pr", "view", "--json", _PR_FIELDS], stdout=pr_json())
 

@@ -1,8 +1,10 @@
-"""zh: batched `gh` PR/release actions for AI agents — PR merge preflight,
-review-thread reply/resolve, and release preflight/create, each as one call
-instead of several chained `gh`/API calls. Actions `gh` already does in a
-single call (create, close, comment, review, label, reviewer) are left to
-`gh` itself."""
+"""zh: what's up with this repo, plus the `gh` PR/release actions for AI
+agents — status/CI/PR/my/review/issues reporting (so zh works standalone,
+without wazup installed alongside it), and batched write-side actions like
+PR merge preflight, review-thread reply/resolve, and release
+preflight/create, each as one call instead of several chained `gh`/API
+calls. Actions `gh` already does in a single call (create, close, comment,
+review, label, reviewer) are left to `gh` itself."""
 
 from __future__ import annotations
 
@@ -10,9 +12,10 @@ import argparse
 import os
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime, timedelta, timezone
 
-from . import gh, registry, ticket, versioning
+from . import gh, registry, skills, ticket, versioning
 
 
 def _color(text: str, code: str) -> str:
@@ -45,6 +48,564 @@ def _add_ref_arg(p: argparse.ArgumentParser) -> None:
 
 def _gh_ref_args(args: argparse.Namespace) -> list[str]:
     return [args.ref] if args.ref else []
+
+
+def _add_why_flag(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "-w",
+        "--why",
+        action="store_true",
+        help="for failed checks, show the tail of the failing job's log",
+    )
+
+
+# ---------------------------------------------------------------------------
+# status/ci — read-side reporting ported from wazup, so zh doesn't require it
+# installed alongside just to answer "what's up with this repo/PR/CI run?"
+
+def _check_icon(conclusion: str | None, status: str) -> str:
+    s = (status or "").upper()
+    c = (conclusion or "").upper()
+    if s in {"IN_PROGRESS", "QUEUED", "PENDING", "WAITING"}:
+        return _yellow("~")
+    if c == "SUCCESS" or s == "SUCCESS":
+        return _green("✓")
+    if c in {"FAILURE", "TIMED_OUT", "CANCELLED", "STARTUP_FAILURE", "ACTION_REQUIRED"} or s in {
+        "FAILURE",
+        "ERROR",
+    }:
+        return _red("✗")
+    return _dim("?")
+
+
+def _fetch_failure_info(
+    checks: list[gh.CheckRun], why: bool
+) -> list[tuple[str | None, str | None]]:
+    """(summary, log tail) per check, fetched concurrently — each is an
+    independent `gh` call, so threads (I/O-bound, stdlib-only) turn N
+    sequential round trips into ~1."""
+    if not checks:
+        return []
+
+    def fetch(c: gh.CheckRun) -> tuple[str | None, str | None]:
+        summary = gh.failed_steps_summary(c.details_url)
+        tail = gh.failure_log_tail(c.details_url) if why else None
+        return summary, tail
+
+    with ThreadPoolExecutor(max_workers=len(checks)) as pool:
+        return list(pool.map(fetch, checks))
+
+
+def _print_failure_detail(c: gh.CheckRun, tail: str | None) -> None:
+    if tail:
+        print(_dim(f"       ── {c.name} (last lines before failure) ──"))
+        for line in tail.splitlines():
+            print(f"       {_dim('|')} {line}")
+    elif c.details_url:
+        print(f"       see: {c.details_url}")
+
+
+def _print_why_hint(cmd: str) -> None:
+    # spells out the exact command (not just "pass --why") since this is
+    # parsed by AI agents as often as read by humans, and a vague hint gets
+    # ignored in favor of the agent improvising raw `gh`/`git` commands
+    print(f"       {_dim(f'run `{cmd} --why` to see the failing log')}")
+
+
+def _print_checks(checks: list[gh.CheckRun], cmd: str, why: bool = False) -> bool:
+    """Prints the check list; returns whether the *other*, unlisted repo
+    workflow runs shown alongside it are also clean (see
+    _print_recent_other_runs) — combine with _all_checks_passed(checks) for
+    the overall verdict."""
+    if not checks:
+        print("ci     no checks reported")
+    else:
+        print("ci")
+        failed = [c for c in checks if gh.is_failed(c)]
+        info = iter(_fetch_failure_info(failed, why))
+
+        for c in checks:
+            print(f"       {_check_icon(c.conclusion, c.status)} {c.name}")
+            if gh.is_failed(c):
+                summary, tail = next(info)
+                if summary:
+                    print(f"         {_dim(summary)}")
+                if why:
+                    _print_failure_detail(c, tail)
+        if failed and not why:
+            _print_why_hint(cmd)
+    return _print_recent_other_runs(
+        exclude_names={c.name for c in checks},
+        exclude_urls={c.details_url for c in checks},
+    )
+
+
+def _staleness_note(head_sha: str | None) -> str | None:
+    """None if a run's commit is HEAD (or its distance from HEAD can't be
+    determined locally); otherwise a note that it predates HEAD by N
+    commits — e.g. a path-filtered workflow (docs, release) whose last run
+    is several commits behind because nothing since has touched its paths,
+    so a failure shown here may already be moot."""
+    if not head_sha:
+        return None
+    behind = gh.commits_ahead_of(head_sha)
+    if not behind:
+        return None
+    return _dim(
+        f"stale — ran on {head_sha[:7]}, {behind} commit{'s' if behind != 1 else ''} "
+        "behind HEAD; may already be fixed"
+    )
+
+
+def _print_recent_other_runs(exclude_names: set[str], exclude_urls: set[str | None]) -> bool:
+    """Other workflows' runs elsewhere in the repo — still active, or
+    completed within the last hour — that weren't already shown above.
+    E.g. a release-triggered publish workflow, invisible to the
+    branch-scoped CI lookup since it isn't scoped to this branch. Only the
+    most recent run per workflow name is shown. Returns False if any shown
+    run has failed, so callers can fold it into their "clean" verdict
+    instead of it only ever being a footnote."""
+    try:
+        runs = gh.recent_other_runs()
+    except gh.ZithubError:
+        return True
+    seen: set[str] = set()
+    ok = True
+    for r in runs:
+        if r.name in exclude_names or r.url in exclude_urls or r.name in seen:
+            continue
+        seen.add(r.name)
+        icon = _check_icon(r.conclusion, r.status)
+        success = (r.conclusion or "").upper() == "SUCCESS" or (r.status or "").upper() == "SUCCESS"
+        if success:
+            # a clean pass needs no link — same reasoning as _print_ci_fallback
+            age = gh.run_age_minutes(r.created_at)
+            suffix = f"  {_dim(f'{age}m ago')}" if age is not None else ""
+            print(f"       {icon} {r.name}{suffix}")
+        else:
+            print(f"       {icon} {r.name}  {r.url}")
+            if gh.is_failed(gh.CheckRun(r.name, r.status, r.conclusion, r.url)):
+                ok = False
+                note = _staleness_note(r.head_sha)
+                if note:
+                    print(f"         {note}")
+    return ok
+
+
+def _print_ci_fallback(branch: str, why: bool, cmd: str) -> tuple[bool, bool]:
+    """CI status for a branch with no open PR, from its latest workflow
+    runs — this is what `pr` would show if there were a PR to attach to.
+    Returns (found, passed): whether any runs were found, and whether the
+    latest one succeeded."""
+    runs = gh.latest_runs_for_branch(branch, limit=10)
+    if not runs:
+        return False, False
+
+    checks = [gh.CheckRun(r.name, r.status, r.conclusion, r.url) for r in runs]
+    latest = checks[0]
+    earlier_failures = sum(1 for c in checks[1:] if gh.is_failed(c))
+
+    print("ci")
+    icon = _check_icon(latest.conclusion, latest.status)
+    if gh.is_success(latest):
+        # a clean pass needs no link — the URL only earns its keep when
+        # there's something to click through to (a failure, or a run still
+        # in flight worth watching)
+        print(f"       {icon} {latest.name}")
+    else:
+        print(f"       {icon} {latest.name}  {latest.details_url}")
+
+    if not gh.is_failed(latest):
+        if earlier_failures:
+            note = f"fixed — {earlier_failures} of the last {len(checks)} runs had failed"
+            print(f"         {_dim(note)}")
+        other_ok = _print_recent_other_runs(
+            exclude_names={latest.name}, exclude_urls={latest.details_url}
+        )
+        return True, gh.is_success(latest) and other_ok
+
+    summary, tail = _fetch_failure_info([latest], why)[0]
+    if summary:
+        print(f"         {_dim(summary)}")
+    if why:
+        _print_failure_detail(latest, tail)
+    stale = _staleness_note(runs[0].head_sha)
+    if stale:
+        print(f"         {stale}")
+    if earlier_failures:
+        print(f"         {_dim(f'{earlier_failures + 1} of the last {len(checks)} runs failed')}")
+    if not why:
+        _print_why_hint(cmd)
+    _print_recent_other_runs(exclude_names={latest.name}, exclude_urls={latest.details_url})
+    return True, False
+
+
+def _pr_suffix(prs: dict[str, gh.BranchPr], branch: str) -> str:
+    pr = prs.get(branch)
+    if not pr:
+        return ""
+    draft = " draft" if pr.is_draft else ""
+    return f"  {_green(f'PR #{pr.number}{draft}')}"
+
+
+def _worktree_status_note(unmerged: int | None, dirty: bool) -> str:
+    # "merged" is a safe-to-prune claim, so it must not appear next to
+    # "dirty" — pruning a dirty worktree loses uncommitted work regardless
+    # of whether its commits are merged.
+    if dirty:
+        return f"  {_red('dirty')}"
+    if unmerged is None:
+        return ""
+    if unmerged == 0:
+        return f"  {_dim('merged')}"
+    return f"  {_yellow(f'{unmerged} unmerged')}"
+
+
+def _print_recent_branches(current_branch: str) -> None:
+    # called only when current_branch is the repo's default branch, so it
+    # doubles as the ref worktrees are checked for unmerged commits against
+    worktrees = gh.worktree_branches()
+    all_branches = gh.local_branches_by_recency(exclude={current_branch, *worktrees})
+    branches = [b for b in all_branches if not gh.is_orphaned_worktree_branch_name(b.name)][:8]
+    prs = gh.open_prs_by_branch()
+
+    if branches:
+        print("recent branches")
+        for b in branches:
+            print(f"       {b.name}  ({b.relative_date}){_pr_suffix(prs, b.name)}")
+
+    worktree_entries = gh.worktree_info(
+        exclude_branch=current_branch, default_ref=f"origin/{current_branch}"
+    )
+    if worktree_entries:
+        print("worktrees")
+        for w in worktree_entries:
+            path = _dim(_display_path(w.path))
+            print(
+                f"       {w.branch}  ({w.relative_date})"
+                f"{_pr_suffix(prs, w.branch)}{_worktree_status_note(w.unmerged, w.dirty)}  {path}"
+            )
+
+
+_MAX_LISTED_CHANGED_FILES = 10
+
+
+def _print_local_status(status: gh.LocalStatus) -> None:
+    if status.ahead is None:
+        push_note = _dim("no upstream")
+    else:
+        notes = []
+        if status.ahead > 0:
+            notes.append(f"{status.ahead} unpushed")
+        if status.behind:
+            ff_note = " (fast-forward)" if not status.ahead else ""
+            notes.append(f"{status.behind} behind{ff_note}")
+        push_note = _yellow(", ".join(notes)) if notes else _green("pushed")
+
+    tree_note = _red("dirty") if status.changed_files else _green("clean")
+    untracked_note = (
+        _dim(f"  (+{status.untracked_count} untracked)") if status.untracked_count else ""
+    )
+    print(f"local  {push_note}, {tree_note}{untracked_note}")
+
+    if len(status.changed_files) > _MAX_LISTED_CHANGED_FILES:
+        print(f"       {len(status.changed_files)} files changed")
+    else:
+        for f in status.changed_files:
+            print(f"       {f.status} {f.path}")
+
+
+def _print_worktree_note(repo: gh.RepoInfo, branch: str, local: gh.LocalStatus) -> None:
+    """For a linked worktree (not the repo's main checkout) on a non-default
+    branch, show how it stands against the default branch — the "ahead of
+    origin" figure in the `local` line is against this branch's own
+    upstream, if any, which says nothing about whether the work here has
+    already made it into main via a squash/rebase merge elsewhere."""
+    if branch == repo.default_branch or not gh.is_linked_worktree():
+        return
+    origin_ref = f"origin/{repo.default_branch}"
+    ahead_origin = gh.commits_ahead_of(origin_ref)
+    ahead = ahead_origin
+    ref_label = origin_ref
+    if ahead is None:
+        ahead = gh.commits_ahead_of(repo.default_branch)
+        ref_label = f"local {repo.default_branch}"
+    if ahead is None:
+        return
+    if ahead > 0:
+        # It may still be fully merged locally (e.g. a local ff-merge that
+        # hasn't been pushed) even though origin/main doesn't have it yet —
+        # worth saying so instead of just "not in origin/main", since that
+        # alone reads as unmerged work rather than an unpushed merge.
+        if ahead_origin is not None and ahead_origin > 0:
+            ahead_local = gh.commits_ahead_of(repo.default_branch)
+            if ahead_local == 0:
+                note = _yellow(f"merged into local {repo.default_branch}, not pushed to {origin_ref}")
+                print(f"worktree  {note}")
+                return
+        note = _yellow(f"{ahead} commit{'s' if ahead != 1 else ''} not in {ref_label}")
+        print(f"worktree  {note}")
+        return
+
+    print(f"worktree  {_dim(f'merged into {ref_label}')}")
+    # merged is not enough on its own — deleting a dirty worktree loses
+    # uncommitted work regardless of what's already landed on main.
+    if local.changed_files or local.untracked_count:
+        return
+    root = gh.worktree_root()
+    if root:
+        print(f"          {_dim(f'safe to delete: git worktree remove {root}')}")
+
+
+def _is_local_clean(status: gh.LocalStatus) -> bool:
+    return not status.changed_files and not status.behind and not (status.ahead or 0)
+
+
+def _all_checks_passed(checks: list[gh.CheckRun]) -> bool:
+    return bool(checks) and all(gh.is_success(c) for c in checks)
+
+
+def _print_all_clean_if(local_clean: bool, ci_ok: bool) -> None:
+    # An explicit, imperative line rather than a bare status word — an AI
+    # agent parsing this output should be able to stop analyzing right here
+    # without re-deriving "clean" from the local/ci lines above.
+    if local_clean and ci_ok:
+        print(_green("Everything is clean — nothing to do, no need to dig further."))
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    fetch_thread = gh.start_background_fetch()
+    try:
+        repo = gh.repo_info()
+        branch = gh.current_branch()
+    except gh.ZithubError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"repo   {repo.name_with_owner}  ({repo.url})")
+    print(f"branch {branch}" + (" (default)" if branch == repo.default_branch else ""))
+    fetch_thread.join(timeout=5)  # cap the wait; a slow fetch just means stale ahead/behind
+    local = gh.local_status()
+    _print_local_status(local)
+    _print_worktree_note(repo, branch, local)
+
+    pr = gh.current_pr()
+    if pr is None:
+        print("pr     none")
+        try:
+            found, ci_ok = _print_ci_fallback(branch, args.why, cmd="zh")
+        except gh.ZithubError:
+            found, ci_ok = False, False
+        if not found:
+            print("ci     none")
+        if branch == repo.default_branch:
+            _print_recent_branches(current_branch=branch)
+        _print_all_clean_if(local_clean=_is_local_clean(local), ci_ok=found and ci_ok)
+        return 0
+
+    state = pr.state.lower() + (" (draft)" if pr.is_draft else "")
+    print(f"pr     #{pr.number} {pr.title}  [{state}]")
+    print(f"       {pr.url}")
+    if pr.review_decision:
+        print(f"review {pr.review_decision.replace('_', ' ').lower()}")
+
+    other_ok = _print_checks(pr.checks, cmd="zh", why=args.why)
+    _print_all_clean_if(
+        local_clean=_is_local_clean(local), ci_ok=_all_checks_passed(pr.checks) and other_ok
+    )
+    return 0
+
+
+def _print_review_threads(threads: list[gh.ReviewThread], show_resolved: bool) -> None:
+    shown = threads if show_resolved else [t for t in threads if not t.is_resolved]
+    if not shown:
+        label = "no review comments" if show_resolved else "no unresolved review comments"
+        print(f"comments  {_green(label)}")
+        return
+
+    unresolved_count = sum(1 for t in shown if not t.is_resolved)
+    print(f"comments  {_yellow(f'{unresolved_count} unresolved')}" + (
+        f", {len(shown) - unresolved_count} resolved" if show_resolved else ""
+    ))
+    for t in shown:
+        status = _dim("(resolved)") if t.is_resolved else _red("(unresolved)")
+        for c in t.comments:
+            loc = f"{c.path}:{c.line}" if c.path else ""
+            print(f"       {c.author}  {loc}  {status}")
+            for line in c.body.splitlines():
+                print(f"         {_dim(line)}")
+        print()
+    if not show_resolved and len(shown) < len(threads):
+        print(f"       {_dim('run `zh pr --all` to also see resolved threads')}")
+
+
+def cmd_pr_status(args: argparse.Namespace) -> int:
+    try:
+        repo = gh.repo_info()
+        branch = gh.current_branch()
+    except gh.ZithubError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"repo   {repo.name_with_owner}  ({repo.url})")
+
+    pr = gh.current_pr()
+    if pr is None:
+        print(f"branch {branch}  (no open PR)")
+        return 1
+
+    state = pr.state.lower() + (" (draft)" if pr.is_draft else "")
+    print(f"pr     #{pr.number} {pr.title}  [{state}]")
+    print(f"       {pr.url}")
+    if pr.review_decision:
+        print(f"review {pr.review_decision.replace('_', ' ').lower()}")
+
+    ci_ok = _print_checks(pr.checks, cmd="zh pr", why=args.why) and _all_checks_passed(pr.checks)
+
+    threads = gh.review_threads(repo.owner, repo.name, pr.number)
+    _print_review_threads(threads, show_resolved=args.all)
+
+    unresolved = any(not t.is_resolved for t in threads)
+    if ci_ok and not unresolved:
+        print(_green("Everything is clean — nothing to do, no need to dig further."))
+    return 0
+
+
+def cmd_ci(args: argparse.Namespace) -> int:
+    try:
+        branch = gh.current_branch()
+    except gh.ZithubError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    pr = gh.current_pr()
+    if pr is not None:
+        print(f"pr #{pr.number} {pr.title}")
+        _print_checks(pr.checks, cmd="zh ci", why=args.why)
+        return 0
+
+    print(f"branch {branch}  (no open PR)")
+    try:
+        found, _ci_ok = _print_ci_fallback(branch, args.why, cmd="zh ci")
+    except gh.ZithubError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if not found:
+        print(f"no CI runs found for branch {branch}")
+    return 0
+
+
+def _parse_iso(ts: str) -> float:
+    return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+
+
+def _print_pr_line(p: gh.PullRequestSummary, indent: str, show_state: bool = False) -> None:
+    draft = _dim(" draft") if p.is_draft else ""
+    age = _dim(_relative_age(_parse_iso(p.updated_at)))
+    state = _dim(f"  [{p.state.lower()}]") if show_state else ""
+    print(f"{indent}#{p.number} {p.title}{draft}{state}  {age}")
+    print(f"{indent}    {_dim(p.url)}")
+
+
+def _group_by_repo(prs: list[gh.PullRequestSummary]) -> dict[str, list[gh.PullRequestSummary]]:
+    by_repo: dict[str, list[gh.PullRequestSummary]] = {}
+    for p in prs:
+        by_repo.setdefault(p.repo or "?", []).append(p)
+    return by_repo
+
+
+def _print_pr_list(prs: list[gh.PullRequestSummary], show_repo: bool, show_closed: bool = False) -> None:
+    if not prs:
+        print("  none")
+        return
+    if not show_repo:
+        for p in prs:
+            _print_pr_line(p, indent="  ")
+        return
+
+    # Cross-repo: surface open PRs grouped by repo; collapse merged/closed
+    # noise (routine over a wide window) to per-repo counts, unless
+    # show_closed asks for the full breakdown instead.
+    open_prs = [p for p in prs if p.state.upper() == "OPEN"]
+    other_prs = [p for p in prs if p.state.upper() != "OPEN"]
+
+    open_by_repo = _group_by_repo(open_prs)
+    print(_green(f"open ({len(open_prs)})"))
+    for repo in sorted(open_by_repo):
+        print(f"  {repo}")
+        for p in open_by_repo[repo]:
+            _print_pr_line(p, indent="    ")
+
+    if not other_prs:
+        return
+
+    if show_closed:
+        print(_dim(f"closed/merged ({len(other_prs)})"))
+        by_repo = _group_by_repo(other_prs)
+        for repo in sorted(by_repo):
+            print(f"  {repo}")
+            for p in by_repo[repo]:
+                _print_pr_line(p, indent="    ", show_state=True)
+    else:
+        counts: dict[str, int] = {}
+        for p in other_prs:
+            counts[p.repo or "?"] = counts.get(p.repo or "?", 0) + 1
+        summary = ", ".join(f"{repo} ({n})" for repo, n in sorted(counts.items()))
+        print(_dim(f"closed/merged in window ({len(other_prs)}): {summary}  (--closed for details)"))
+
+
+def _print_issue_list(issues: list[gh.IssueSummary], show_repo: bool) -> None:
+    if not issues:
+        print("  none")
+        return
+    for i in issues:
+        prefix = f"{i.repo}  " if show_repo and i.repo else ""
+        print(f"  {prefix}#{i.number} {i.title}  [{i.state.lower()}]  {i.updated_at}")
+        print(f"      {i.url}")
+
+
+def cmd_my(args: argparse.Namespace) -> int:
+    try:
+        repo = gh.current_repo()
+        if repo is not None:
+            print(f"your open PRs in {repo.name_with_owner}:")
+            _print_pr_list(gh.my_open_prs_in_repo(), show_repo=False)
+        else:
+            since = (date.today() - timedelta(days=args.days)).isoformat()
+            print(f"your open PRs across all repos, plus closed/merged since {since}:")
+            _print_pr_list(gh.my_recent_prs(since), show_repo=True, show_closed=args.closed)
+    except gh.ZithubError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    since = (date.today() - timedelta(days=7)).isoformat()
+    print(f"PRs awaiting your review, updated since {since}:")
+    try:
+        _print_pr_list(gh.prs_awaiting_my_review(since), show_repo=True)
+    except gh.ZithubError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_issues(args: argparse.Namespace) -> int:
+    try:
+        repo = gh.current_repo()
+        if repo is not None:
+            print(f"your open issues in {repo.name_with_owner}:")
+            _print_issue_list(gh.my_open_issues_in_repo(), show_repo=False)
+        else:
+            since = (date.today() - timedelta(days=7)).isoformat()
+            print(f"your open issues with activity since {since}:")
+            _print_issue_list(gh.my_open_issues(since), show_repo=True)
+    except gh.ZithubError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -737,11 +1298,23 @@ def _record_repo_seen() -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="zh", description="batched gh PR actions for AI agents"
+        prog="zh", description="what's up with this repo, plus the gh PR/release actions"
     )
+    parser.set_defaults(func=cmd_status, needs_gh=True)
+    _add_why_flag(parser)
     sub = parser.add_subparsers(dest="command")
-    pr = sub.add_parser("pr", help="PR actions gh doesn't already do in one call")
-    pr_sub = pr.add_subparsers(dest="pr_command", required=True)
+
+    p_ci = sub.add_parser("ci", help="show CI status for the current branch/PR")
+    p_ci.set_defaults(func=cmd_ci)
+    _add_why_flag(p_ci)
+
+    pr = sub.add_parser("pr", help="PR status, or actions gh doesn't already do in one call")
+    pr.add_argument(
+        "--all", action="store_true", help="also show resolved review comment threads"
+    )
+    _add_why_flag(pr)
+    pr.set_defaults(func=cmd_pr_status)
+    pr_sub = pr.add_subparsers(dest="pr_command", required=False)
 
     p_threads = pr_sub.add_parser(
         "threads", help="list review-comment threads (with the ids reply/resolve need)"
@@ -823,6 +1396,23 @@ def build_parser() -> argparse.ArgumentParser:
         )
         p_bump.set_defaults(func=cmd_release_bump, part=part)
 
+    p_my = sub.add_parser("my", help="list your open PRs, or recent PR activity outside a repo")
+    p_my.add_argument(
+        "--days", type=int, default=30, help="outside a repo: lookback window in days (default: 30)"
+    )
+    p_my.add_argument(
+        "--closed", action="store_true", help="outside a repo: show closed/merged PRs in full, not just counts"
+    )
+    p_my.set_defaults(func=cmd_my)
+
+    p_review = sub.add_parser("review", help="list PRs awaiting your review, updated this week")
+    p_review.set_defaults(func=cmd_review)
+
+    p_issues = sub.add_parser(
+        "issues", help="list your open issues in this repo, or recent issue activity outside a repo"
+    )
+    p_issues.set_defaults(func=cmd_issues)
+
     p_repos = sub.add_parser(
         "repos",
         help="list local checkouts zh has seen, so agents can find one without guessing paths",
@@ -832,16 +1422,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_repos.set_defaults(func=cmd_repos, needs_gh=False)
 
+    p_install_skills = sub.add_parser(
+        "install-skills",
+        help="install the zh Claude Code skill to $CLAUDE_CONFIG_DIR/skills/ (default ~/.claude/skills/)",
+    )
+    p_install_skills.add_argument(
+        "--skills-dir",
+        metavar="DIR",
+        help="target directory for skills (default: $CLAUDE_CONFIG_DIR/skills, or ~/.claude/skills)",
+    )
+    p_install_skills.set_defaults(func=skills.install_skills_command, needs_gh=False)
+
     return parser
 
 
 def main() -> None:
     parser = build_parser()
-    parser.set_defaults(needs_gh=True)
     args = parser.parse_args()
-    if not getattr(args, "func", None):
-        parser.print_help()
-        sys.exit(1)
+    if args.command != "install-skills":
+        skills.check_skill_staleness()
     if args.needs_gh:
         _record_repo_seen()
+        notice = gh.ensure_gh_account_for_repo()
+        if notice:
+            print(_dim(notice), file=sys.stderr)
     sys.exit(args.func(args))

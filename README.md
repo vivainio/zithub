@@ -1,17 +1,19 @@
 # zithub
 
-`zh` — batched `gh` PR and release actions for AI agents, for what plain
-`gh` can't already do in a single call: acting on PR review-comment threads
-(no `gh` subcommand exists for these at all), merging with a real preflight
+`zh` — what's up with this repo, right now, plus batched `gh` PR and release
+actions for AI agents. A standalone `gh`/`git` CLI: bare `zh` gives repo,
+branch, local, PR, and CI status in one shot (no separate status tool
+required), and the rest covers what plain `gh` can't already do in a single
+call — acting on PR review-comment threads (no `gh` subcommand exists for
+these at all), merging with a real preflight
 (draft/review-decision/unresolved-threads/CI, checked and merged in one
-call instead of chained separately), and release preflight/creation. Where
-[wazup](https://github.com/vivainio/wazup) is the read-only "what's up with
-this repo" status tool, `zh` is its narrower complement, covering the
-specific PR/release actions wazup doesn't — some read-only (`pr threads`,
-`pr check`), most mutating (`pr reply`/`resolve`, `pr merge`, `release
-create`). It deliberately does *not* wrap `gh pr create/close/comment/
-review/edit`, since those are already one `gh` call each and an agent that
-already knows `gh` gains nothing from a second name for the same thing.
+call instead of chained separately), and release preflight/creation. The
+status/CI/PR/my/review/issues reporting is ported from
+[wazup](https://github.com/vivainio/wazup), so `zh` doesn't need wazup
+installed alongside it. It deliberately does *not* wrap `gh pr
+create/close/comment/review/edit`, since those are already one `gh` call
+each and an agent that already knows `gh` gains nothing from a second name
+for the same thing.
 
 Requires the [GitHub CLI](https://cli.github.com/) (`gh`) installed and
 authenticated (`gh auth login`).
@@ -19,6 +21,15 @@ authenticated (`gh auth login`).
 ## Commands
 
 ```
+zh                # repo, branch, local, PR, and CI status in one shot
+                  # (also recent branches/worktrees on the default branch)
+zh ci             # just the CI status for the current branch/PR
+zh pr             # current branch's PR: status, checks, and review comment
+                  # threads (unresolved by default; --all also shows resolved)
+zh my             # your open PRs in this repo, or recent PR activity outside one
+zh review         # PRs awaiting your review, updated in the last 7 days
+zh issues         # your open issues in this repo, or recent activity outside one
+
 zh pr threads    # list review-comment threads (with the ids below)
 zh pr reply      # reply to a review-comment thread, optionally --resolve
 zh pr resolve    # mark thread(s) resolved, by id or --all
@@ -33,8 +44,13 @@ zh release                    # preflight, then commits + the gh command for eac
 zh release patch/minor/major  # preflight, then just that one bumped version + gh command
 zh release create             # preflight, then actually create at an explicit version
 
-zh repos         # local checkouts zh has seen, most-recently-seen first
+zh repos           # local checkouts zh has seen, most-recently-seen first
+zh install-skills  # install the zh Claude Code skill
 ```
+
+Add `-w`/`--why` to `zh`, `zh ci`, or `zh pr` to drill into a failing check
+— prints the tail of the failing job's log, right up to the error, instead
+of just a pass/fail icon.
 
 `threads`/`reply`/`resolve`/`unresolve` exist because `gh` has no
 subcommand for review threads at all — they go through `gh api graphql`
@@ -122,8 +138,8 @@ zh release create v1.3.0 -n "$(cat notes.md)"
 zh release create v2.0.0-rc1 --prerelease --force   # skip the preflight
 ```
 
-Every command above (except `repos` itself) also registers the checkout it
-ran in — path, repo, branch — into a local registry at
+Every command above that needs `gh` also registers the checkout it ran in
+— path, repo, branch — into a local registry at
 `~/.local/share/zithub/repos.jsonl`, ported from wazup's own (a separate
 database, same design). `zh repos` lists what's been seen, letting an
 agent find a local checkout of a repo by name instead of guessing paths or
