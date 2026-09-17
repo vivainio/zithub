@@ -216,33 +216,7 @@ def test_pr_status_no_pr_errors(fake_cli, capsys):
 # ---------------------------------------------------------------------------
 # my / review / issues
 
-def test_my_lists_open_prs_in_repo(fake_cli, capsys):
-    fake_cli.set(["gh", "repo", "view", "--json", _REPO_FIELDS], stdout=repo_json())
-    fake_cli.set(
-        ["gh", "pr", "list", "--author", "@me", "--json", "number,title,url,state,isDraft,updatedAt"],
-        stdout=json.dumps(
-            [
-                {
-                    "number": 3,
-                    "title": "Fix bug",
-                    "url": "https://x/3",
-                    "state": "OPEN",
-                    "isDraft": False,
-                    "updatedAt": "2026-01-01T00:00:00Z",
-                }
-            ]
-        ),
-    )
-
-    rc = run(["my"])
-    out = capsys.readouterr().out
-    assert rc == 0
-    assert "your open PRs in acme/widgets:" in out
-    assert "#3 Fix bug" in out
-
-
-def test_my_outside_repo_shows_recent_activity(fake_cli, capsys):
-    fake_cli.fail(["gh", "repo", "view", "--json", _REPO_FIELDS])
+def test_my_shows_recent_activity_across_repos(fake_cli, capsys):
     since = _since(30)
     fake_cli.set(
         [

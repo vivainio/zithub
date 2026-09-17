@@ -90,8 +90,8 @@ def repo_info() -> RepoInfo:
 
 def current_repo() -> RepoInfo | None:
     """Like repo_info(), but None instead of raising when cwd isn't a GitHub
-    repo — for commands (`my`, `issues`) that work either scoped to the
-    current repo or cross-repo, depending on whether there is one."""
+    repo — for commands (`issues`) that work either scoped to the current
+    repo or cross-repo, depending on whether there is one."""
     try:
         return repo_info()
     except ZithubError:
@@ -976,23 +976,6 @@ class PullRequestSummary:
     is_draft: bool
     updated_at: str
     repo: str | None = None
-
-
-def my_open_prs_in_repo() -> list[PullRequestSummary]:
-    data = _run_json(
-        ["gh", "pr", "list", "--author", "@me", "--json", "number,title,url,state,isDraft,updatedAt"]
-    )
-    return [
-        PullRequestSummary(
-            number=p["number"],
-            title=p["title"],
-            url=p["url"],
-            state=p["state"],
-            is_draft=p["isDraft"],
-            updated_at=p["updatedAt"],
-        )
-        for p in data
-    ]
 
 
 _SEARCH_PR_FIELDS = "number,title,url,state,isDraft,updatedAt,repository"

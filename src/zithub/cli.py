@@ -567,14 +567,9 @@ def _print_issue_list(issues: list[gh.IssueSummary], show_repo: bool) -> None:
 
 def cmd_my(args: argparse.Namespace) -> int:
     try:
-        repo = gh.current_repo()
-        if repo is not None:
-            print(f"your open PRs in {repo.name_with_owner}:")
-            _print_pr_list(gh.my_open_prs_in_repo(), show_repo=False)
-        else:
-            since = (date.today() - timedelta(days=args.days)).isoformat()
-            print(f"your open PRs across all repos, plus closed/merged since {since}:")
-            _print_pr_list(gh.my_recent_prs(since), show_repo=True, show_closed=args.closed)
+        since = (date.today() - timedelta(days=args.days)).isoformat()
+        print(f"your open PRs across all repos, plus closed/merged since {since}:")
+        _print_pr_list(gh.my_recent_prs(since), show_repo=True, show_closed=args.closed)
     except gh.ZithubError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -1399,12 +1394,12 @@ def build_parser() -> argparse.ArgumentParser:
         )
         p_bump.set_defaults(func=cmd_release_bump, part=part)
 
-    p_my = sub.add_parser("my", help="list your open PRs, or recent PR activity outside a repo")
+    p_my = sub.add_parser("my", help="list your open PRs across all repos, plus recent closed/merged")
     p_my.add_argument(
-        "--days", type=int, default=30, help="outside a repo: lookback window in days (default: 30)"
+        "--days", type=int, default=30, help="lookback window in days for closed/merged PRs (default: 30)"
     )
     p_my.add_argument(
-        "--closed", action="store_true", help="outside a repo: show closed/merged PRs in full, not just counts"
+        "--closed", action="store_true", help="show closed/merged PRs in full, not just counts"
     )
     p_my.set_defaults(func=cmd_my)
 
