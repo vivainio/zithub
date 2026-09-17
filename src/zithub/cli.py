@@ -567,9 +567,14 @@ def _print_issue_list(issues: list[gh.IssueSummary], show_repo: bool) -> None:
 
 def cmd_my(args: argparse.Namespace) -> int:
     try:
-        since = (date.today() - timedelta(days=args.days)).isoformat()
-        print(f"your open PRs across all repos, plus closed/merged since {since}:")
-        _print_pr_list(gh.my_recent_prs(since), show_repo=True, show_closed=args.closed)
+        if args.this:
+            repo = gh.repo_info()
+            print(f"your open PRs in {repo.name_with_owner}:")
+            _print_pr_list(gh.my_open_prs_in_repo(), show_repo=False)
+        else:
+            since = (date.today() - timedelta(days=args.days)).isoformat()
+            print(f"your open PRs across all repos, plus closed/merged since {since}:")
+            _print_pr_list(gh.my_recent_prs(since), show_repo=True, show_closed=args.closed)
     except gh.ZithubError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -1400,6 +1405,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_my.add_argument(
         "--closed", action="store_true", help="show closed/merged PRs in full, not just counts"
+    )
+    p_my.add_argument(
+        "--this", action="store_true", help="scope to the current repo instead of all repos"
     )
     p_my.set_defaults(func=cmd_my)
 

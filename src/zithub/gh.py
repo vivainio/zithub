@@ -978,6 +978,23 @@ class PullRequestSummary:
     repo: str | None = None
 
 
+def my_open_prs_in_repo() -> list[PullRequestSummary]:
+    data = _run_json(
+        ["gh", "pr", "list", "--author", "@me", "--json", "number,title,url,state,isDraft,updatedAt"]
+    )
+    return [
+        PullRequestSummary(
+            number=p["number"],
+            title=p["title"],
+            url=p["url"],
+            state=p["state"],
+            is_draft=p["isDraft"],
+            updated_at=p["updatedAt"],
+        )
+        for p in data
+    ]
+
+
 _SEARCH_PR_FIELDS = "number,title,url,state,isDraft,updatedAt,repository"
 # GitHub search caps a single query's results; 200 comfortably covers a
 # personal open-PR count without needing pagination.

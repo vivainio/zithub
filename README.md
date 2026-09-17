@@ -27,6 +27,7 @@ zh ci             # just the CI status for the current branch/PR
 zh pr             # current branch's PR: status, checks, and review comment
                   # threads (unresolved by default; --all also shows resolved)
 zh my             # your open PRs across all repos, plus recent closed/merged
+zh my --this      # ...just for the current repo
 zh review         # PRs awaiting your review, updated in the last 7 days
 zh issues         # your open issues in this repo, or recent activity outside one
 
