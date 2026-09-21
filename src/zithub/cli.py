@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 
-from . import gh, registry, skills, ticket, versioning
+from . import gh, plan, registry, skills, ticket, versioning
 
 
 def _color(text: str, code: str) -> str:
@@ -895,6 +896,169 @@ def _add_merge_args(p: argparse.ArgumentParser, default_delete_branch: bool) -> 
 
 
 # ---------------------------------------------------------------------------
+# plan — draft every PR write action into one reviewable file, then apply it
+# in one go (see plan.py for the format)
+
+_PR_REF_RE = re.compile(r"^(\d+|https?://\S+/pull/\d+\S*)$")
+
+
+def _plan_generate(args: argparse.Namespace) -> int:
+    if args.ref and not _PR_REF_RE.match(args.ref):
+        print(f"error: expected a PR number or URL, got {args.ref!r} (branch names aren't supported)", file=sys.stderr)
+        return 1
+    try:
+        repo = gh.repo_info()
+        pr = gh.resolve_pr(args.ref)
+        threads = gh.review_threads(repo.owner, repo.name, pr.number)
+    except gh.ZithubError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    text = plan.render(repo.name_with_owner, pr, threads, show_resolved=args.all)
+    if not args.output:
+        sys.stdout.write(text)
+        return 0
+    if os.path.exists(args.output) and not args.force:
+        print(f"error: {args.output} exists (it may hold edits) — pass --force to overwrite", file=sys.stderr)
+        return 1
+    with open(args.output, "w", encoding="utf-8") as f:
+        f.write(text)
+    print(_green(f"wrote {args.output}"), file=sys.stderr)
+    return 0
+
+
+def _plan_problems(
+    p: plan.Plan, repo: gh.RepoInfo, pr: gh.PullRequest, threads: list[gh.ReviewThread]
+) -> list[str]:
+    """Everything that would make applying `p` fail or act on something the
+    plan's author never saw — checked before any action runs."""
+    problems: list[str] = []
+    if p.repo != repo.name_with_owner:
+        problems.append(f"plan is for {p.repo}, but this directory is {repo.name_with_owner}")
+    if pr.head_sha != p.head:
+        problems.append(
+            f"stale plan: PR head moved {p.head[:7]} -> {pr.head_sha[:7]} — regenerate with `zh plan`"
+        )
+    if pr.state != "OPEN":
+        problems.append(f"PR #{pr.number} is {pr.state.lower()}, not open")
+
+    resolved = {t.id: t.is_resolved for t in threads}
+    for a in p.actions:
+        if a.kind in ("reply", "resolve", "unresolve"):
+            for tid in a.args:
+                if tid not in resolved:
+                    problems.append(f"line {a.line}: no such thread on #{pr.number}: {tid}")
+                elif a.kind == "resolve":
+                    resolved[tid] = True
+                elif a.kind == "unresolve":
+                    resolved[tid] = False
+        else:  # merge / ship: judged against thread state after the earlier actions
+            if pr.is_draft:
+                problems.append(f"line {a.line}: PR is a draft")
+            if pr.review_decision == "CHANGES_REQUESTED":
+                problems.append(f"line {a.line}: changes requested")
+            open_threads = sum(1 for r in resolved.values() if not r)
+            if open_threads:
+                problems.append(f"line {a.line}: {open_threads} thread(s) still unresolved after this plan")
+            failed = [c.name for c in pr.checks if gh.is_failed(c)]
+            if failed:
+                problems.append(f"line {a.line}: failing check(s): {', '.join(failed)}")
+    return problems
+
+
+def _plan_describe(a: plan.Action) -> str:
+    if a.kind == "reply":
+        return f"reply to {a.args[0]} ({len(a.body)} chars)"
+    if a.kind in ("resolve", "unresolve"):
+        return f"{a.kind} {', '.join(a.args)}"
+    return f"{a.kind} ({a.args[0]})"
+
+
+def _plan_run(a: plan.Action, number: int) -> None:
+    if a.kind == "reply":
+        print(_green(f"replied: {gh.reply_to_thread(a.args[0], a.body)}"))
+    elif a.kind == "resolve":
+        for tid in a.args:
+            if not gh.resolve_thread(tid):
+                raise gh.ZithubError(f"could not resolve {tid}")
+            print(_green(f"resolved  {tid}"))
+    elif a.kind == "unresolve":
+        for tid in a.args:
+            gh.unresolve_thread(tid)
+            print(_green(f"unresolved  {tid}"))
+    else:
+        rc = cmd_merge(
+            argparse.Namespace(
+                ref=str(number),
+                method=a.args[0],
+                delete_branch=a.kind == "ship",
+                admin=False,
+                auto=False,
+                subject=None,
+                body=None,
+                force=False,
+                wait=True,
+                timeout=1200,
+            )
+        )
+        if rc != 0:
+            raise gh.ZithubError(f"{a.kind} failed")
+
+
+def _plan_apply(args: argparse.Namespace) -> int:
+    try:
+        if args.apply == "-":
+            text = sys.stdin.read()
+        else:
+            with open(args.apply, encoding="utf-8") as f:
+                text = f.read()
+        p = plan.parse(text)
+        repo = gh.repo_info()
+        pr = gh.resolve_pr(str(p.number))
+        threads = gh.review_threads(repo.owner, repo.name, pr.number)
+    except (OSError, plan.PlanError, gh.ZithubError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    problems = _plan_problems(p, repo, pr, threads)
+    if problems:
+        for msg in problems:
+            print(f"error: {msg}", file=sys.stderr)
+        print("nothing was applied", file=sys.stderr)
+        return 1
+    if not p.actions:
+        print("plan has no actions — nothing to do")
+        return 0
+
+    print(f"plan   {p.repo}#{p.number}  {pr.title}")
+    for i, a in enumerate(p.actions, start=1):
+        print(f"  {i}. {_plan_describe(a)}")
+    if args.dry_run:
+        print(_dim("dry run — nothing was applied"))
+        return 0
+
+    for i, a in enumerate(p.actions):
+        try:
+            _plan_run(a, p.number)
+        except gh.ZithubError as exc:
+            print(f"error: step {i + 1} ({_plan_describe(a)}): {exc}", file=sys.stderr)
+            print(f"applied {i} of {len(p.actions)}; not run:", file=sys.stderr)
+            for rest in p.actions[i:]:
+                print(f"  - {_plan_describe(rest)}", file=sys.stderr)
+            return 1
+    return 0
+
+
+def cmd_plan(args: argparse.Namespace) -> int:
+    if args.apply:
+        return _plan_apply(args)
+    if args.dry_run:
+        print("error: --dry-run only applies with --apply", file=sys.stderr)
+        return 1
+    return _plan_generate(args)
+
+
+# ---------------------------------------------------------------------------
 # release preflight / create — ports the github-release skill's preflight.py
 # (gh auth, target branch, remote sync, CI) so `release create` can gate on
 # it directly: one call that checks readiness and creates the release,
@@ -1310,9 +1474,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zh", description="what's up with this repo, plus the gh PR/release actions"
     )
-    parser.set_defaults(func=cmd_status, needs_gh=True)
-    _add_why_flag(parser)
+    parser.set_defaults(needs_gh=True)
     sub = parser.add_subparsers(dest="command")
+
+    p_status = sub.add_parser("status", help="repo, branch, local, PR, and CI status in one shot")
+    p_status.set_defaults(func=cmd_status, needs_gh=True)
+    _add_why_flag(p_status)
 
     p_ci = sub.add_parser("ci", help="show CI status for the current branch/PR")
     p_ci.set_defaults(func=cmd_ci)
@@ -1375,6 +1542,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="merge + delete branch: `merge` with cleanup defaults on",
     )
     _add_merge_args(p_ship, default_delete_branch=True)
+
+    p_plan = sub.add_parser(
+        "plan",
+        help="draft PR actions into one reviewable file (`zh plan > plan.md`), then `--apply` it",
+    )
+    p_plan.add_argument(
+        "ref", nargs="?", help="PR number or URL (default: current branch's PR)"
+    )
+    p_plan.add_argument("--all", action="store_true", help="also list resolved threads in the scaffold")
+    p_plan.add_argument("-o", "--output", help="write the scaffold to this file instead of stdout")
+    p_plan.add_argument("--force", action="store_true", help="with -o, overwrite an existing file")
+    p_plan.add_argument(
+        "--apply", metavar="FILE", help="validate and run a plan file ('-' for stdin) instead of generating one"
+    )
+    p_plan.add_argument("--dry-run", action="store_true", help="with --apply, show the steps without running them")
+    p_plan.set_defaults(func=cmd_plan)
 
     release = sub.add_parser(
         "release",
@@ -1452,6 +1635,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    if args.command is None:
+        # bare `zh` is deliberately inert: no gh calls, no registry writes
+        parser.print_help()
+        sys.exit(0)
     if args.command != "install-skills":
         skills.check_skill_staleness()
     if args.needs_gh:

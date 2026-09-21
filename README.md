@@ -21,7 +21,8 @@ authenticated (`gh auth login`).
 ## Commands
 
 ```
-zh                # repo, branch, local, PR, and CI status in one shot
+zh                # prints help (bare zh does nothing)
+zh status         # repo, branch, local, PR, and CI status in one shot
                   # (also recent branches/worktrees on the default branch)
 zh ci             # just the CI status for the current branch/PR
 zh pr             # current branch's PR: status, checks, and review comment
@@ -35,6 +36,10 @@ zh pr threads    # list review-comment threads (with the ids below)
 zh pr reply      # reply to a review-comment thread, optionally --resolve
 zh pr resolve    # mark thread(s) resolved, by id or --all
 zh pr unresolve  # reopen thread(s)
+
+zh plan          # draft reply/resolve/merge actions into ONE reviewable file
+                 # (context as comments, all actions commented out): zh plan > plan.md
+zh plan --apply plan.md [--dry-run]   # validate everything, then run it in order
 
 zh pr check      # target branch, and whether the PR references a ticket
 

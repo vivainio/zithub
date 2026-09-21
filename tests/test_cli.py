@@ -9,9 +9,7 @@ import pytest
 from zithub import gh
 from zithub.cli import build_parser
 
-_PR_FIELDS = (
-    "number,title,url,state,isDraft,reviewDecision,statusCheckRollup,headRefName,baseRefName,body"
-)
+_PR_FIELDS = gh._PR_VIEW_FIELDS
 
 
 def run(argv: list[str]) -> int:
@@ -907,3 +905,15 @@ def test_merge_pending_without_wait_blocks(fake_cli, capsys):
     rc = run(["pr", "merge", "--no-wait"])
     assert rc == 1
     assert "still pending" in capsys.readouterr().err
+
+
+def test_bare_zh_prints_help_and_does_nothing(monkeypatch, fake_cli, capsys):
+    import zithub.cli as cli_mod
+
+    monkeypatch.setattr("sys.argv", ["zh"])
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main()
+
+    assert exc.value.code == 0
+    assert "usage: zh" in capsys.readouterr().out
+    assert fake_cli.calls == []

@@ -9,9 +9,7 @@ from datetime import date, timedelta
 from zithub import gh
 from zithub.cli import build_parser
 
-_PR_FIELDS = (
-    "number,title,url,state,isDraft,reviewDecision,statusCheckRollup,headRefName,baseRefName,body"
-)
+_PR_FIELDS = gh._PR_VIEW_FIELDS
 _REPO_FIELDS = "owner,name,nameWithOwner,url,defaultBranchRef"
 
 
@@ -67,7 +65,7 @@ def test_status_clean_pr_all_checks_pass(fake_cli, capsys):
     fake_cli.set(["gh", "pr", "view", "--json", _PR_FIELDS], stdout=pr_json())
     fake_cli.set(["gh", "run", "list", "--limit", "20", "--json", gh._RUN_LIST_FIELDS], stdout="[]")
 
-    rc = run([])
+    rc = run(["status"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "repo   acme/widgets" in out
@@ -89,7 +87,7 @@ def test_status_no_pr_falls_back_to_branch_ci(fake_cli, capsys):
         stdout="[]",
     )
 
-    rc = run([])
+    rc = run(["status"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "pr     none" in out

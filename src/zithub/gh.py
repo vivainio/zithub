@@ -130,10 +130,12 @@ class PullRequest:
     base_ref_name: str
     checks: list[CheckRun]
     body: str = ""
+    head_sha: str = ""
 
 
 _PR_VIEW_FIELDS = (
-    "number,title,url,state,isDraft,reviewDecision,statusCheckRollup,headRefName,baseRefName,body"
+    "number,title,url,state,isDraft,reviewDecision,statusCheckRollup,headRefName,baseRefName,body,"
+    "headRefOid"
 )
 
 
@@ -166,6 +168,7 @@ def resolve_pr(ref: str | None = None) -> PullRequest:
         base_ref_name=data["baseRefName"],
         checks=checks,
         body=data.get("body") or "",
+        head_sha=data.get("headRefOid") or "",
     )
 
 
@@ -187,6 +190,7 @@ class ReviewComment:
     body: str
     path: str | None = None
     line: int | None = None
+    diff_hunk: str = ""
 
 
 @dataclass
@@ -215,7 +219,7 @@ query($owner: String!, $repo: String!, $pr: Int!, $after: String) {
           isResolved
           comments(first: 50) {
             pageInfo { hasNextPage endCursor }
-            nodes { id body createdAt path line author { login } }
+            nodes { id body createdAt path line diffHunk author { login } }
           }
         }
       }
@@ -234,7 +238,7 @@ query($id: ID!, $after: String) {
     ... on PullRequestReviewThread {
       comments(first: 50, after: $after) {
         pageInfo { hasNextPage endCursor }
-        nodes { id body createdAt path line author { login } }
+        nodes { id body createdAt path line diffHunk author { login } }
       }
     }
   }
@@ -250,6 +254,7 @@ def _parse_review_comment(c: dict) -> ReviewComment:
         body=c.get("body", ""),
         path=c.get("path"),
         line=c.get("line"),
+        diff_hunk=c.get("diffHunk") or "",
     )
 
 

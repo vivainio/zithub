@@ -1,7 +1,7 @@
 ---
 name: zithub
 description: Check repo/branch/PR/CI status, view or act on a PR's review comment threads, merge/ship a PR, run a release preflight or cut a release, list your PRs/issues, or find a local checkout of a repo, using the zh CLI. Use when working in a git repo and you need repo/branch/PR/CI status in one shot instead of piecing it together from several `gh`/`git` calls, or when you need to merge a PR, reply to/resolve review comments, or cut a release without chaining multiple `gh` commands by hand.
-updated: 2026-09-13
+updated: 2026-09-21
 ---
 
 # zh
@@ -18,7 +18,7 @@ run in a repo — repo, branch, PR, and CI status in one shot, plus a final
 ## Commands
 
 ```bash
-zh                    # repo, branch, PR, and CI status for the current directory
+zh status             # repo, branch, PR, and CI status for the current directory (bare `zh` only prints help)
                        # (also lists recent local branches/worktrees when on the
                        # default branch with no PR of its own)
 zh ci                  # just the CI status for the current branch/PR
@@ -34,6 +34,14 @@ zh review              # PRs awaiting your review, updated in the last 7 days
 zh issues              # your open issues in this repo, or (outside a repo) your
                         # open issues with activity in the last 7 days, across all repos
 
+zh plan [pr] > plan.md       # read-only: scaffold with every thread's context (diff hunk,
+                              # comments) as # comments and all actions commented out
+zh plan --apply plan.md       # after the plan is edited: validates all of it first (stale
+                              # head, unknown threads, merge blockers), then runs it in order;
+                              # --dry-run shows the steps. Prefer this to separate reply/
+                              # resolve/merge calls: draft the plan, let the user review it,
+                              # then apply once. Plan verbs: `reply <thread>` (indented body),
+                              # `resolve`/`unresolve <thread>...`, `merge|ship [method]` (last)
 zh pr threads [ref]           # list review-comment threads (with the ids reply/resolve need)
 zh pr reply <thread_id> -b .. # reply to a review-comment thread (--resolve to also resolve it)
 zh pr resolve [thread_id...]  # mark review-comment thread(s) resolved (--all for every one)
@@ -72,7 +80,7 @@ reply/resolve, release preflight/create).
 Exit codes are meaningful: `zh repos` (with no matches) exits 1; `zh pr`
 (bare) exits 1 if there's no open PR for the current branch; `zh pr merge`/
 `zh release` exit 1 if their preflight fails; the plain status commands
-(`zh`, `zh ci`, `zh my`, `zh review`, `zh issues`) exit 0 regardless of what
+(`zh status`, `zh ci`, `zh my`, `zh review`, `zh issues`) exit 0 regardless of what
 they report (they're informational).
 
 ## Install
