@@ -452,6 +452,13 @@ def cmd_pr_status(args: argparse.Namespace) -> int:
     pr = gh.current_pr()
     if pr is None:
         print(f"branch {branch}  (no open PR)")
+        try:
+            mine = gh.my_open_prs_in_repo()
+        except gh.ZithubError:
+            mine = []
+        if mine:
+            print(f"your open PRs in {repo.name_with_owner}:")
+            _print_pr_list(mine, show_repo=False)
         return 1
 
     state = pr.state.lower() + (" (draft)" if pr.is_draft else "")

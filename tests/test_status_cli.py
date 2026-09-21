@@ -207,10 +207,28 @@ def test_pr_status_no_pr_errors(fake_cli, capsys):
     fake_cli.set(["git", "rev-parse", "--abbrev-ref", "HEAD"], stdout="feature")
     fake_cli.fail(["gh", "pr", "view", "--json", _PR_FIELDS])
 
+    fake_cli.set(
+        ["gh", "pr", "list", "--author", "@me", "--json", "number,title,url,state,isDraft,updatedAt"],
+        stdout=json.dumps(
+            [
+                {
+                    "number": 3,
+                    "title": "Fix bug",
+                    "url": "https://x/3",
+                    "state": "OPEN",
+                    "isDraft": False,
+                    "updatedAt": "2026-01-01T00:00:00Z",
+                }
+            ]
+        ),
+    )
+
     rc = run(["pr"])
     out = capsys.readouterr().out
     assert rc == 1
     assert "branch feature  (no open PR)" in out
+    assert "your open PRs in acme/widgets:" in out
+    assert "#3 Fix bug" in out
 
 
 # ---------------------------------------------------------------------------
