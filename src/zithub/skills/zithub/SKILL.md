@@ -1,7 +1,7 @@
 ---
 name: zithub
-description: Check repo/branch/PR/CI status, view or act on a PR's review comment threads, merge/ship a PR, run a release preflight or cut a release, list your PRs/issues, or find a local checkout of a repo, using the zh CLI. Use when working in a git repo and you need repo/branch/PR/CI status in one shot instead of piecing it together from several `gh`/`git` calls, or when you need to merge a PR, reply to/resolve review comments, or cut a release without chaining multiple `gh` commands by hand.
-updated: 2026-09-21
+description: Check repo/branch/PR/CI status, view or act on a PR's review comment threads, merge/ship a PR, run a release preflight or cut a release, list your PRs/issues, sync/query a local sqlite board of your open PRs, or find a local checkout of a repo, using the zh CLI. Use when working in a git repo and you need repo/branch/PR/CI status in one shot instead of piecing it together from several `gh`/`git` calls, or when you need to merge a PR, reply to/resolve review comments, cut a release, or see which of your open PRs across repos need attention right now.
+updated: 2026-09-22
 ---
 
 # zh
@@ -33,6 +33,15 @@ zh my                  # your open PRs in this repo, or (outside a repo) all you
 zh review              # PRs awaiting your review, updated in the last 7 days
 zh issues              # your open issues in this repo, or (outside a repo) your
                         # open issues with activity in the last 7 days, across all repos
+
+zh board sync          # fetch every open PR you authored (any repo) — review decision,
+                        # aggregate CI state, comment count/last commenter — into a local
+                        # sqlite db (one GraphQL call, not one `gh pr view` per PR)
+zh board               # synced PRs, oldest-activity first (--stale-days N to filter)
+zh board focus         # the same PRs grouped by what to do: fix CI, needs your reply
+                        # (someone else commented last), ready to merge (approved + green
+                        # + not draft), and a count of the rest that need nothing from you
+zh board query "<SQL>" # ad hoc read-only SELECT/WITH against the synced `prs` table
 
 zh plan [pr] > plan.md       # read-only: scaffold with every thread's context (diff hunk,
                               # comments) as # comments and all actions commented out
@@ -79,9 +88,12 @@ reply/resolve, release preflight/create).
 
 Exit codes are meaningful: `zh repos` (with no matches) exits 1; `zh pr`
 (bare) exits 1 if there's no open PR for the current branch; `zh pr merge`/
-`zh release` exit 1 if their preflight fails; the plain status commands
-(`zh status`, `zh ci`, `zh my`, `zh review`, `zh issues`) exit 0 regardless of what
-they report (they're informational).
+`zh release` exit 1 if their preflight fails; `zh board query` exits 1 on
+anything but a `SELECT`/`WITH` statement or a SQL error; the plain status
+commands (`zh status`, `zh ci`, `zh my`, `zh review`, `zh issues`, `zh
+board`, `zh board focus`) exit 0 regardless of what they report (they're
+informational). `zh board` is local-only and never live — run `zh board
+sync` first, and again whenever the synced data might be stale.
 
 ## Install
 
