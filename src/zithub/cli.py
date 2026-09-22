@@ -1196,9 +1196,20 @@ def _release_preflight(target_arg: str | None) -> tuple[str, str, list[gh.Releas
         )
         return None
     if sha != remote_sha:
+        relation = gh.ahead_behind(remote_sha)
+        if relation is None:
+            fix = f"push with `git push origin {target}` or reconcile"
+        else:
+            ahead, behind = relation
+            if behind == 0:
+                fix = f"push with `git push origin {target}`"
+            elif ahead == 0:
+                fix = f"pull with `git pull origin {target}`"
+            else:
+                fix = "reconcile the diverged history"
         print(
             f"error: local HEAD ({sha[:12]}) != origin/{target} ({remote_sha[:12]}) — "
-            f"push with `git push origin {target}` or reconcile, then retry",
+            f"{fix}, then retry",
             file=sys.stderr,
         )
         return None

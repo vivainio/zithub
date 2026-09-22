@@ -707,6 +707,19 @@ def commits_ahead_of(ref: str) -> int | None:
         return None
 
 
+def ahead_behind(ref: str) -> tuple[int, int] | None:
+    """(ahead, behind) commit counts between HEAD and `ref` — how many
+    commits HEAD has that `ref` doesn't, and vice versa. None if `ref`
+    doesn't exist locally. Used to tell whether a sync mismatch needs a
+    push (ahead only), a pull (behind only), or a real reconcile (both)."""
+    try:
+        out = _run(["git", "rev-list", "--left-right", "--count", f"HEAD...{ref}"])
+    except ZithubError:
+        return None
+    ahead, behind = out.split()
+    return int(ahead), int(behind)
+
+
 @dataclass
 class ChangedFile:
     status: str  # single-letter: M, A, D, R, C, U

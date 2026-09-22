@@ -563,12 +563,35 @@ def test_release_bare_dirty_warns_but_passes(fake_cli, monkeypatch, capsys):
     assert "PREFLIGHT PASS" in out
 
 
-def test_release_bare_sync_mismatch(fake_cli, capsys):
+def test_release_bare_sync_mismatch_ahead_suggests_push(fake_cli, capsys):
     set_preflight_up_to_ci(fake_cli)
     fake_cli._responses[("git", "rev-parse", "origin/main")] = [("def456", 0, "")]
+    fake_cli.set(["git", "rev-list", "--left-right", "--count", "HEAD...def456"], stdout="1\t0")
     rc = run(["release"])
+    err = capsys.readouterr().err
     assert rc == 1
-    assert "!= origin/main" in capsys.readouterr().err
+    assert "!= origin/main" in err
+    assert "push with `git push origin main`" in err
+
+
+def test_release_bare_sync_mismatch_behind_suggests_pull(fake_cli, capsys):
+    set_preflight_up_to_ci(fake_cli)
+    fake_cli._responses[("git", "rev-parse", "origin/main")] = [("def456", 0, "")]
+    fake_cli.set(["git", "rev-list", "--left-right", "--count", "HEAD...def456"], stdout="0\t1")
+    rc = run(["release"])
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "pull with `git pull origin main`" in err
+
+
+def test_release_bare_sync_mismatch_diverged_suggests_reconcile(fake_cli, capsys):
+    set_preflight_up_to_ci(fake_cli)
+    fake_cli._responses[("git", "rev-parse", "origin/main")] = [("def456", 0, "")]
+    fake_cli.set(["git", "rev-list", "--left-right", "--count", "HEAD...def456"], stdout="2\t3")
+    rc = run(["release"])
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "reconcile the diverged history" in err
 
 
 def test_release_bare_no_ci_found_proceeds(fake_cli, monkeypatch, capsys):
