@@ -474,6 +474,78 @@ def test_check_multiple_prs_reports_each_and_aggregates_failure(fake_cli, capsys
 
 
 # ---------------------------------------------------------------------------
+# board — local sqlite cache of open PRs
+
+def test_board_sync_then_list_and_query(fake_cli, capsys):
+    from zithub import board, gh as gh_mod
+
+    fake_cli.set(
+        ["gh", "api", "graphql", "-f", f"query={gh_mod._BOARD_PRS_QUERY}", "-F", "q=is:pr is:open author:@me"],
+        stdout=json.dumps(
+            {
+                "data": {
+                    "search": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [
+                            {
+                                "number": 1,
+                                "title": "Fix widget",
+                                "url": "https://github.com/acme/widgets/pull/1",
+                                "isDraft": False,
+                                "reviewDecision": "APPROVED",
+                                "createdAt": "2026-08-01T00:00:00Z",
+                                "updatedAt": "2026-09-01T00:00:00Z",
+                                "repository": {"nameWithOwner": "acme/widgets"},
+                                "comments": {
+                                    "totalCount": 1,
+                                    "nodes": [
+                                        {"createdAt": "2026-09-10T00:00:00Z", "author": {"login": "reviewer1"}}
+                                    ],
+                                },
+                                "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]},
+                            }
+                        ],
+                    }
+                }
+            }
+        ),
+    )
+
+    rc = run(["board", "sync"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "synced 1 open PR" in out
+    assert board.list_board()[0].last_comment_author == "reviewer1"
+
+    rc = run(["board"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "acme/widgets#1" in out
+    assert "review: approved" in out
+    assert "last comment: reviewer1" in out
+
+    rc = run(["board", "query", "select repo, number, ci_state from prs"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "acme/widgets" in out
+    assert "success" in out
+
+
+def test_board_query_rejects_write_statements(fake_cli, capsys):
+    rc = run(["board", "query", "delete from prs"])
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "only SELECT/WITH queries are allowed" in err
+
+
+def test_board_bare_with_nothing_synced(capsys):
+    rc = run(["board"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "run `zh board sync` first" in out
+
+
+# ---------------------------------------------------------------------------
 # release preflight / create
 
 _RUN_LIST_FIELDS = "databaseId,name,status,conclusion,url,headSha,createdAt"

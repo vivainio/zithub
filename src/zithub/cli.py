@@ -16,7 +16,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 
-from . import gh, plan, registry, skills, ticket, versioning
+from . import board, gh, plan, registry, skills, ticket, versioning
 
 
 def _color(text: str, code: str) -> str:
@@ -586,6 +586,71 @@ def cmd_my(args: argparse.Namespace) -> int:
     except gh.ZithubError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    return 0
+
+
+def cmd_board_sync(args: argparse.Namespace) -> int:
+    try:
+        prs = gh.board_prs()
+    except gh.ZithubError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    board.sync(prs, synced_at=datetime.now(timezone.utc).isoformat())
+    print(f"synced {len(prs)} open PR(s) to {board.db_path()}")
+    return 0
+
+
+def _days_idle(iso_timestamp: str) -> int:
+    then = datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00"))
+    return (datetime.now(timezone.utc) - then).days
+
+
+def cmd_board(args: argparse.Namespace) -> int:
+    rows = board.list_board()
+    if not rows:
+        print(f"no synced PRs — run `zh board sync` first  ({board.db_path()})")
+        return 0
+    stale_days = args.stale_days
+    shown = 0
+    for r in rows:
+        idle = _days_idle(r.last_activity_at)
+        if stale_days is not None and idle < stale_days:
+            continue
+        shown += 1
+        idle_label = f"idle {idle}d"
+        idle_label = _yellow(idle_label) if idle >= 7 else idle_label
+        draft = " (draft)" if r.is_draft else ""
+        review = r.review_decision.lower().replace("_", " ") or "no review"
+        last_comment = f"  last comment: {r.last_comment_author}" if r.last_comment_author else ""
+        print(f"{r.repo}#{r.number}{draft}  {r.title}")
+        print(
+            f"    {idle_label}  ci: {r.ci_state}  review: {review}  "
+            f"comments: {r.comment_count}{last_comment}"
+        )
+        print(f"    {r.url}")
+    if stale_days is not None and shown == 0:
+        print(f"no PRs idle >= {stale_days}d")
+    return 0
+
+
+def cmd_board_query(args: argparse.Namespace) -> int:
+    try:
+        columns, rows = board.run_query(args.sql)
+    except board.BoardError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:  # sqlite3 errors (bad SQL, unknown column, etc.)
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if not rows:
+        print("no rows")
+        return 0
+    widths = [
+        max(len(str(col)), *(len(str(row[i])) for row in rows)) for i, col in enumerate(columns)
+    ]
+    print("  ".join(col.ljust(w) for col, w in zip(columns, widths)))
+    for row in rows:
+        print("  ".join(str(v).ljust(w) for v, w in zip(row, widths)))
     return 0
 
 
@@ -1611,6 +1676,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--this", action="store_true", help="scope to the current repo instead of all repos"
     )
     p_my.set_defaults(func=cmd_my)
+
+    p_board = sub.add_parser(
+        "board", help="local sqlite view of your open PRs, synced from GitHub (`zh board sync` first)"
+    )
+    p_board.add_argument(
+        "--stale-days", type=int, default=None, metavar="N", help="only show PRs idle for at least N days"
+    )
+    p_board.set_defaults(func=cmd_board, needs_gh=False)
+    board_sub = p_board.add_subparsers(dest="board_command")
+
+    p_board_sync = board_sub.add_parser("sync", help="fetch your open PRs and their activity into the local db")
+    p_board_sync.set_defaults(func=cmd_board_sync)
+
+    p_board_query = board_sub.add_parser("query", help="run a read-only SQL query against the synced db")
+    p_board_query.add_argument("sql", help='e.g. "select repo, number, title from prs where ci_state=\'failed\'"')
+    p_board_query.set_defaults(func=cmd_board_query, needs_gh=False)
 
     p_review = sub.add_parser("review", help="list PRs awaiting your review, updated this week")
     p_review.set_defaults(func=cmd_review)

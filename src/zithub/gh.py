@@ -118,6 +118,7 @@ def is_success(c: CheckRun) -> bool:
     return (c.conclusion or "").lower() == "success" or (c.status or "").lower() == "success"
 
 
+
 @dataclass
 class PullRequest:
     number: int
@@ -180,6 +181,90 @@ def current_pr(ref: str | None = None) -> PullRequest | None:
         return resolve_pr(ref)
     except ZithubError:
         return None
+
+
+_BOARD_PRS_QUERY = """
+query($q: String!, $after: String) {
+  search(query: $q, type: ISSUE, first: 100, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      ... on PullRequest {
+        number
+        title
+        url
+        isDraft
+        reviewDecision
+        createdAt
+        updatedAt
+        repository { nameWithOwner }
+        comments(last: 1) {
+          totalCount
+          nodes { createdAt author { login } }
+        }
+        commits(last: 1) {
+          nodes { commit { statusCheckRollup { state } } }
+        }
+      }
+    }
+  }
+}
+"""
+
+_ROLLUP_STATE_TO_CI_STATE = {
+    "SUCCESS": "success",
+    "PENDING": "pending",
+    "EXPECTED": "pending",
+    "ERROR": "failed",
+    "FAILURE": "failed",
+}
+
+
+def board_prs() -> list[PullRequestSummary]:
+    """Every open PR authored by you, with the per-PR detail `zh board`
+    needs (review decision, aggregate CI state, last comment) — one
+    GraphQL `search` query, paginated 100 at a time, instead of a search
+    call plus a separate `gh pr view` round trip per PR."""
+    results: list[PullRequestSummary] = []
+    after: str | None = None
+    while True:
+        args = [
+            "gh",
+            "api",
+            "graphql",
+            "-f",
+            f"query={_BOARD_PRS_QUERY}",
+            "-F",
+            "q=is:pr is:open author:@me",
+        ]
+        if after:
+            args += ["-F", f"after={after}"]
+        data = _run_json(args)["data"]["search"]
+        for node in data["nodes"]:
+            comments = node["comments"]["nodes"]
+            last_comment = comments[-1] if comments else None
+            commit_nodes = node["commits"]["nodes"]
+            rollup = (commit_nodes[0]["commit"].get("statusCheckRollup") if commit_nodes else None) or {}
+            results.append(
+                PullRequestSummary(
+                    number=node["number"],
+                    title=node["title"],
+                    url=node["url"],
+                    state="OPEN",
+                    is_draft=node["isDraft"],
+                    updated_at=node["updatedAt"],
+                    repo=node["repository"]["nameWithOwner"],
+                    review_decision=node.get("reviewDecision") or "",
+                    ci_state=_ROLLUP_STATE_TO_CI_STATE.get(rollup.get("state"), "none"),
+                    created_at=node["createdAt"],
+                    comment_count=node["comments"]["totalCount"],
+                    last_comment_at=(last_comment or {}).get("createdAt"),
+                    last_comment_author=((last_comment or {}).get("author") or {}).get("login"),
+                )
+            )
+        page_info = data["pageInfo"]
+        if not page_info["hasNextPage"]:
+            return results
+        after = page_info["endCursor"]
 
 
 @dataclass
@@ -994,6 +1079,14 @@ class PullRequestSummary:
     is_draft: bool
     updated_at: str
     repo: str | None = None
+    # populated only by board_prs(), for `zh board` — the staleness
+    # signals that a plain `gh pr list`/`gh search prs` doesn't return.
+    review_decision: str = ""
+    ci_state: str = ""
+    created_at: str = ""
+    comment_count: int = 0
+    last_comment_at: str | None = None
+    last_comment_author: str | None = None
 
 
 def my_open_prs_in_repo() -> list[PullRequestSummary]:
