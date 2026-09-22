@@ -510,12 +510,17 @@ def test_board_sync_then_list_and_query(fake_cli, capsys):
             }
         ),
     )
+    fake_cli.set(
+        ["gh", "auth", "status", "--json", "hosts"],
+        stdout=json.dumps({"hosts": {"github.com": [{"login": "vivainio", "active": True}]}}),
+    )
 
     rc = run(["board", "sync"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "synced 1 open PR" in out
     assert board.list_board()[0].last_comment_author == "reviewer1"
+    assert board.get_login() == "vivainio"
 
     rc = run(["board"])
     out = capsys.readouterr().out
@@ -536,6 +541,52 @@ def test_board_query_rejects_write_statements(fake_cli, capsys):
     err = capsys.readouterr().err
     assert rc == 1
     assert "only SELECT/WITH queries are allowed" in err
+
+
+def test_board_focus_groups_by_what_needs_action(capsys):
+    from zithub import board, gh as gh_mod
+
+    def pr(number, **overrides):
+        fields = dict(
+            number=number,
+            title=f"PR {number}",
+            url=f"https://github.com/acme/widgets/pull/{number}",
+            state="OPEN",
+            is_draft=False,
+            updated_at="2026-09-01T00:00:00Z",
+            repo="acme/widgets",
+            review_decision="",
+            ci_state="success",
+            created_at="2026-08-01T00:00:00Z",
+            comment_count=0,
+            last_comment_at=None,
+            last_comment_author=None,
+        )
+        fields.update(overrides)
+        return gh_mod.PullRequestSummary(**fields)
+
+    board.sync(
+        [
+            pr(1, ci_state="failed"),  # fix CI
+            pr(2, last_comment_author="someone_else", last_comment_at="2026-09-05T00:00:00Z"),  # needs your reply
+            pr(3, review_decision="APPROVED", ci_state="success"),  # ready to merge
+            pr(4, review_decision="REVIEW_REQUIRED"),  # waiting on others
+        ],
+        synced_at="t",
+        login="vivainio",
+    )
+
+    rc = run(["board", "focus"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "fix CI (1)" in out
+    assert "#1" in out
+    assert "needs your reply (1)" in out
+    assert "#2" in out
+    assert "ready to merge (1)" in out
+    assert "#3" in out
+    assert "waiting on others: 1 PR(s)" in out
 
 
 def test_board_bare_with_nothing_synced(capsys):

@@ -52,6 +52,10 @@ CREATE TABLE IF NOT EXISTS prs (
     synced_at TEXT NOT NULL,
     PRIMARY KEY (repo, number)
 );
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -59,14 +63,16 @@ def _connect() -> sqlite3.Connection:
     os.makedirs(_data_dir(), exist_ok=True)
     conn = sqlite3.connect(db_path())
     conn.row_factory = sqlite3.Row
-    conn.execute(_SCHEMA)
+    conn.executescript(_SCHEMA)
     return conn
 
 
-def sync(prs: list[gh.PullRequestSummary], synced_at: str) -> None:
+def sync(prs: list[gh.PullRequestSummary], synced_at: str, login: str | None = None) -> None:
     """Replace the table's contents with exactly `prs` — the scope is
     "your currently-open PRs", so a PR merged/closed since the last sync
-    should simply disappear rather than linger as a stale row."""
+    should simply disappear rather than linger as a stale row. `login` (your
+    active gh account) is stashed in `meta` so `zh board focus` can tell
+    "you last commented" from "someone else did" without its own gh call."""
     rows = [
         (
             p.repo,
@@ -92,6 +98,17 @@ def sync(prs: list[gh.PullRequestSummary], synced_at: str) -> None:
             "INSERT INTO prs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             rows,
         )
+        if login:
+            conn.execute(
+                "INSERT INTO meta VALUES ('login', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (login,),
+            )
+
+
+def get_login() -> str | None:
+    with _connect() as conn:
+        row = conn.execute("SELECT value FROM meta WHERE key = 'login'").fetchone()
+        return row["value"] if row else None
 
 
 @dataclass

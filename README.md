@@ -34,6 +34,7 @@ zh issues         # your open issues in this repo, or recent activity outside on
 
 zh board sync             # fetch your open PRs + activity (CI, review, comments) into a local sqlite db
 zh board                  # list synced PRs, oldest activity first (--stale-days N to filter)
+zh board focus            # grouped: fix CI, needs your reply, ready to merge, waiting on others
 zh board query "<SQL>"    # ad hoc read-only SQL against the synced db
 
 zh pr threads    # list review-comment threads (with the ids below)

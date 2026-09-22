@@ -577,6 +577,16 @@ def list_gh_accounts() -> list[GhAccount]:
     ]
 
 
+def current_login() -> str | None:
+    """The active gh account's login, or None if `gh auth status` has
+    nothing active — used by `zh board` to tell "you last commented" (so
+    the PR is genuinely waiting on someone else) from "someone else did"."""
+    for account in list_gh_accounts():
+        if account.active:
+            return account.login
+    return None
+
+
 _REMOTE_OWNER_RE = re.compile(r"[:/]([^/:@]+)/[^/]+/?$")
 
 

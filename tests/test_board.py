@@ -33,6 +33,15 @@ def test_list_board_empty():
     assert board.list_board() == []
 
 
+def test_get_login_defaults_to_none():
+    assert board.get_login() is None
+
+
+def test_sync_stores_login_for_later_syncs():
+    board.sync([_pr(1)], synced_at="t1", login="vivainio")
+    assert board.get_login() == "vivainio"
+
+
 def test_sync_then_list_sorts_oldest_activity_first():
     old = _pr(1, updated_at="2026-01-01T00:00:00Z")
     recent = _pr(2, updated_at="2026-09-01T00:00:00Z")

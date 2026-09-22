@@ -41,6 +41,10 @@ def _dim(text: str) -> str:
     return _color(text, "2")
 
 
+def _bold(text: str) -> str:
+    return _color(text, "1")
+
+
 def _add_ref_arg(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "ref", nargs="?", help="PR number, URL, or branch (default: current branch's PR)"
@@ -592,10 +596,11 @@ def cmd_my(args: argparse.Namespace) -> int:
 def cmd_board_sync(args: argparse.Namespace) -> int:
     try:
         prs = gh.board_prs()
+        login = gh.current_login()
     except gh.ZithubError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    board.sync(prs, synced_at=datetime.now(timezone.utc).isoformat())
+    board.sync(prs, synced_at=datetime.now(timezone.utc).isoformat(), login=login)
     print(f"synced {len(prs)} open PR(s) to {board.db_path()}")
     return 0
 
@@ -603,6 +608,21 @@ def cmd_board_sync(args: argparse.Namespace) -> int:
 def _days_idle(iso_timestamp: str) -> int:
     then = datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00"))
     return (datetime.now(timezone.utc) - then).days
+
+
+def _print_board_row(r: board.BoardRow) -> None:
+    idle = _days_idle(r.last_activity_at)
+    idle_label = f"idle {idle}d"
+    idle_label = _yellow(idle_label) if idle >= 7 else idle_label
+    draft = " (draft)" if r.is_draft else ""
+    review = r.review_decision.lower().replace("_", " ") or "no review"
+    last_comment = f"  last comment: {r.last_comment_author}" if r.last_comment_author else ""
+    print(f"{r.repo}#{r.number}{draft}  {r.title}")
+    print(
+        f"    {idle_label}  ci: {r.ci_state}  review: {review}  "
+        f"comments: {r.comment_count}{last_comment}"
+    )
+    print(f"    {r.url}")
 
 
 def cmd_board(args: argparse.Namespace) -> int:
@@ -617,19 +637,52 @@ def cmd_board(args: argparse.Namespace) -> int:
         if stale_days is not None and idle < stale_days:
             continue
         shown += 1
-        idle_label = f"idle {idle}d"
-        idle_label = _yellow(idle_label) if idle >= 7 else idle_label
-        draft = " (draft)" if r.is_draft else ""
-        review = r.review_decision.lower().replace("_", " ") or "no review"
-        last_comment = f"  last comment: {r.last_comment_author}" if r.last_comment_author else ""
-        print(f"{r.repo}#{r.number}{draft}  {r.title}")
-        print(
-            f"    {idle_label}  ci: {r.ci_state}  review: {review}  "
-            f"comments: {r.comment_count}{last_comment}"
-        )
-        print(f"    {r.url}")
+        _print_board_row(r)
     if stale_days is not None and shown == 0:
         print(f"no PRs idle >= {stale_days}d")
+    return 0
+
+
+def cmd_board_focus(args: argparse.Namespace) -> int:
+    rows = board.list_board()
+    if not rows:
+        print(f"no synced PRs — run `zh board sync` first  ({board.db_path()})")
+        return 0
+    login = board.get_login()
+
+    fix_ci = [r for r in rows if r.ci_state == "failed"]
+    needs_reply = [
+        r
+        for r in rows
+        if r not in fix_ci and r.last_comment_author and r.last_comment_author != login
+    ]
+    ready_to_merge = [
+        r
+        for r in rows
+        if r not in fix_ci
+        and r not in needs_reply
+        and not r.is_draft
+        and r.review_decision == "APPROVED"
+        and r.ci_state in ("success", "none")
+    ]
+    accounted_for = {id(r) for r in fix_ci + needs_reply + ready_to_merge}
+    waiting = [r for r in rows if id(r) not in accounted_for]
+
+    def _section(title: str, section_rows: list[board.BoardRow]) -> None:
+        if not section_rows:
+            return
+        print(_bold(f"{title} ({len(section_rows)})"))
+        for r in section_rows:
+            _print_board_row(r)
+        print()
+
+    _section("fix CI", fix_ci)
+    _section("needs your reply", needs_reply)
+    _section("ready to merge", ready_to_merge)
+    if waiting:
+        print(_dim(f"waiting on others: {len(waiting)} PR(s), no action needed right now"))
+    if not (fix_ci or needs_reply or ready_to_merge or waiting):
+        print("nothing to focus on")
     return 0
 
 
@@ -1692,6 +1745,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_board_query = board_sub.add_parser("query", help="run a read-only SQL query against the synced db")
     p_board_query.add_argument("sql", help='e.g. "select repo, number, title from prs where ci_state=\'failed\'"')
     p_board_query.set_defaults(func=cmd_board_query, needs_gh=False)
+
+    p_board_focus = board_sub.add_parser(
+        "focus", help="grouped view of the synced PRs: fix CI, needs your reply, ready to merge, waiting on others"
+    )
+    p_board_focus.set_defaults(func=cmd_board_focus, needs_gh=False)
 
     p_review = sub.add_parser("review", help="list PRs awaiting your review, updated this week")
     p_review.set_defaults(func=cmd_review)
