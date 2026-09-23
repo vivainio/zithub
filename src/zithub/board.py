@@ -76,7 +76,7 @@ def sync(
     """Replace the table's contents with exactly `prs` — the scope is
     "your currently-open PRs", so a PR merged/closed since the last sync
     should simply disappear rather than linger as a stale row."""
-    prune(host, {(p.repo, p.number) for p in prs})
+    prune(host, {(p.repo or "", p.number) for p in prs})
     upsert(host, prs, synced_at)
     if login:
         set_login(host, login)

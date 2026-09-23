@@ -4,6 +4,8 @@ conftest.py, which points XDG_DATA_HOME at a temp dir)."""
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from zithub import board, gh
@@ -12,7 +14,7 @@ H = "github.com"
 
 
 def _pr(number, **overrides):
-    fields = dict(
+    fields: dict[str, Any] = dict(
         number=number,
         title=f"PR {number}",
         url=f"https://github.com/acme/widgets/pull/{number}",

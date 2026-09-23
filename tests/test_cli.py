@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
@@ -628,7 +629,7 @@ def test_board_focus_groups_by_what_needs_action(capsys, monkeypatch):
     monkeypatch.setenv("GH_HOST", "github.com")
 
     def pr(number, **overrides):
-        fields = dict(
+        fields: dict[str, Any] = dict(
             number=number,
             title=f"PR {number}",
             url=f"https://github.com/acme/widgets/pull/{number}",
