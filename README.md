@@ -33,9 +33,11 @@ zh review         # PRs awaiting your review, updated in the last 7 days
 zh issues         # your open issues in this repo, or recent activity outside one
 
 zh board sync             # fetch your open PRs + activity (CI, review, comments) into a local sqlite db
+                          # (incremental: only new/updated PRs or unsettled CI; --full refetches all)
 zh board                  # list synced PRs, oldest activity first (--stale-days N to filter)
 zh board focus            # grouped: fix CI, needs your reply, ready to merge, waiting on others
 zh board query "<SQL>"    # ad hoc read-only SQL against the synced db
+                          # (one board per GitHub site: $GH_HOST, else origin's host, else github.com)
 
 zh pr threads    # list review-comment threads (with the ids below)
 zh pr reply      # reply to a review-comment thread, optionally --resolve

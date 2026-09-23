@@ -593,15 +593,58 @@ def cmd_my(args: argparse.Namespace) -> int:
     return 0
 
 
+# CI can finish (or be re-run) without bumping the PR's updatedAt, so a
+# cached row in one of these states is refetched even when unchanged.
+_BOARD_UNSETTLED_CI_STATES = {"pending", "failed"}
+
+
 def cmd_board_sync(args: argparse.Namespace) -> int:
+    """Incremental: list your open PRs cheaply, drop cached rows that are no
+    longer open, then fetch full detail only for PRs that are new, updated
+    since they were cached, or had unsettled CI — in small batches, each
+    saved as it lands, so a re-run after a failure resumes rather than
+    starting over."""
+    host = gh.current_host()
+    synced_at = datetime.now(timezone.utc).isoformat()
     try:
-        prs = gh.board_prs()
-        login = gh.current_login()
+        refs = gh.board_pr_list(host)
+        login = gh.current_login(host)
     except gh.ZithubError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    board.sync(prs, synced_at=datetime.now(timezone.utc).isoformat(), login=login)
-    print(f"synced {len(prs)} open PR(s) to {board.db_path()}")
+    if login:
+        board.set_login(host, login)
+    board.prune(host, {(r.repo, r.number) for r in refs})
+
+    cached = board.cached_versions(host)
+    todo = [
+        r
+        for r in refs
+        if args.full
+        or (r.repo, r.number) not in cached
+        or cached[(r.repo, r.number)][0] != r.updated_at
+        or cached[(r.repo, r.number)][1] in _BOARD_UNSETTLED_CI_STATES
+    ]
+    fetched = 0
+    for i in range(0, len(todo), gh.BOARD_DETAILS_BATCH_SIZE):
+        batch = todo[i : i + gh.BOARD_DETAILS_BATCH_SIZE]
+        try:
+            prs = gh.board_pr_details(host, [r.id for r in batch])
+        except gh.ZithubError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            print(
+                f"saved {fetched}/{len(todo)} PR(s) needing refresh — re-run `zh board sync` to continue",
+                file=sys.stderr,
+            )
+            return 1
+        board.upsert(host, prs, synced_at)
+        fetched += len(batch)
+        if len(todo) > gh.BOARD_DETAILS_BATCH_SIZE:
+            print(f"  fetched {fetched}/{len(todo)}", file=sys.stderr)
+    print(
+        f"synced {len(refs)} open PR(s) from {host} ({len(todo)} refreshed, "
+        f"{len(refs) - len(todo)} unchanged) to {board.db_path(host)}"
+    )
     return 0
 
 
@@ -626,9 +669,10 @@ def _print_board_row(r: board.BoardRow) -> None:
 
 
 def cmd_board(args: argparse.Namespace) -> int:
-    rows = board.list_board()
+    host = gh.current_host()
+    rows = board.list_board(host)
     if not rows:
-        print(f"no synced PRs — run `zh board sync` first  ({board.db_path()})")
+        print(f"no synced PRs for {host} — run `zh board sync` first  ({board.db_path(host)})")
         return 0
     stale_days = args.stale_days
     shown = 0
@@ -644,11 +688,12 @@ def cmd_board(args: argparse.Namespace) -> int:
 
 
 def cmd_board_focus(args: argparse.Namespace) -> int:
-    rows = board.list_board()
+    host = gh.current_host()
+    rows = board.list_board(host)
     if not rows:
-        print(f"no synced PRs — run `zh board sync` first  ({board.db_path()})")
+        print(f"no synced PRs for {host} — run `zh board sync` first  ({board.db_path(host)})")
         return 0
-    login = board.get_login()
+    login = board.get_login(host)
 
     fix_ci = [r for r in rows if r.ci_state == "failed"]
     needs_reply = [
@@ -688,7 +733,7 @@ def cmd_board_focus(args: argparse.Namespace) -> int:
 
 def cmd_board_query(args: argparse.Namespace) -> int:
     try:
-        columns, rows = board.run_query(args.sql)
+        columns, rows = board.run_query(gh.current_host(), args.sql)
     except board.BoardError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -1740,6 +1785,9 @@ def build_parser() -> argparse.ArgumentParser:
     board_sub = p_board.add_subparsers(dest="board_command")
 
     p_board_sync = board_sub.add_parser("sync", help="fetch your open PRs and their activity into the local db")
+    p_board_sync.add_argument(
+        "--full", action="store_true", help="refetch every PR, not just new/changed ones"
+    )
     p_board_sync.set_defaults(func=cmd_board_sync)
 
     p_board_query = board_sub.add_parser("query", help="run a read-only SQL query against the synced db")

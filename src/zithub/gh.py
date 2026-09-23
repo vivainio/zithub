@@ -16,6 +16,7 @@ import os
 import re
 import subprocess
 import time
+import urllib.parse
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -183,12 +184,8 @@ def current_pr(ref: str | None = None) -> PullRequest | None:
         return None
 
 
-_BOARD_PRS_QUERY = """
-query($q: String!, $after: String) {
-  search(query: $q, type: ISSUE, first: 100, after: $after) {
-    pageInfo { hasNextPage endCursor }
-    nodes {
-      ... on PullRequest {
+_BOARD_PR_FIELDS = """
+        id
         number
         title
         url
@@ -204,11 +201,33 @@ query($q: String!, $after: String) {
         commits(last: 1) {
           nodes { commit { statusCheckRollup { state } } }
         }
-      }
-    }
+"""
+
+# Just enough to decide what needs (re)fetching — the expensive per-PR
+# fields (CI rollup especially) at 100 PRs a page are what makes GitHub
+# time out with a 502, so they're fetched separately, a few at a time.
+_BOARD_PR_LIST_QUERY = """
+query($q: String!, $after: String) {
+  search(query: $q, type: ISSUE, first: 100, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes { ... on PullRequest { id number updatedAt repository { nameWithOwner } } }
   }
 }
 """
+
+_BOARD_PR_DETAILS_QUERY = (
+    """
+query($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ... on PullRequest {"""
+    + _BOARD_PR_FIELDS
+    + """    }
+  }
+}
+"""
+)
+
+BOARD_DETAILS_BATCH_SIZE = 20
 
 _ROLLUP_STATE_TO_CI_STATE = {
     "SUCCESS": "success",
@@ -218,53 +237,100 @@ _ROLLUP_STATE_TO_CI_STATE = {
     "FAILURE": "failed",
 }
 
+# gh's stderr for failures worth retrying rather than surfacing: GitHub's
+# GraphQL gateway timing out (502/503/504) or the HTTP/2 stream dropping.
+_TRANSIENT_GH_ERROR_RE = re.compile(r"HTTP 50[234]|stream error")
+_GH_RETRIES = 3
 
-def board_prs() -> list[PullRequestSummary]:
-    """Every open PR authored by you, with the per-PR detail `zh board`
-    needs (review decision, aggregate CI state, last comment) — one
-    GraphQL `search` query, paginated 100 at a time, instead of a search
-    call plus a separate `gh pr view` round trip per PR."""
-    results: list[PullRequestSummary] = []
+
+def _run_json_retrying(args: list[str]):
+    for attempt in range(_GH_RETRIES):
+        try:
+            return _run_json(args)
+        except ZithubError as exc:
+            if attempt == _GH_RETRIES - 1 or not _TRANSIENT_GH_ERROR_RE.search(str(exc)):
+                raise
+            time.sleep(2**attempt)
+
+
+@dataclass
+class BoardPrRef:
+    """An open PR as listed by board_pr_list() — only what `zh board sync`
+    needs to tell whether its cached row is still current."""
+
+    id: str
+    repo: str
+    number: int
+    updated_at: str
+
+
+def board_pr_list(host: str) -> list[BoardPrRef]:
+    """Every open PR authored by you on `host`, as lightweight refs."""
+    results: list[BoardPrRef] = []
     after: str | None = None
     while True:
         args = [
             "gh",
             "api",
+            "--hostname",
+            host,
             "graphql",
             "-f",
-            f"query={_BOARD_PRS_QUERY}",
+            f"query={_BOARD_PR_LIST_QUERY}",
             "-F",
             "q=is:pr is:open author:@me",
         ]
         if after:
             args += ["-F", f"after={after}"]
-        data = _run_json(args)["data"]["search"]
-        for node in data["nodes"]:
-            comments = node["comments"]["nodes"]
-            last_comment = comments[-1] if comments else None
-            commit_nodes = node["commits"]["nodes"]
-            rollup = (commit_nodes[0]["commit"].get("statusCheckRollup") if commit_nodes else None) or {}
-            results.append(
-                PullRequestSummary(
-                    number=node["number"],
-                    title=node["title"],
-                    url=node["url"],
-                    state="OPEN",
-                    is_draft=node["isDraft"],
-                    updated_at=node["updatedAt"],
-                    repo=node["repository"]["nameWithOwner"],
-                    review_decision=node.get("reviewDecision") or "",
-                    ci_state=_ROLLUP_STATE_TO_CI_STATE.get(rollup.get("state"), "none"),
-                    created_at=node["createdAt"],
-                    comment_count=node["comments"]["totalCount"],
-                    last_comment_at=(last_comment or {}).get("createdAt"),
-                    last_comment_author=((last_comment or {}).get("author") or {}).get("login"),
-                )
+        data = _run_json_retrying(args)["data"]["search"]
+        results += [
+            BoardPrRef(
+                id=node["id"],
+                repo=node["repository"]["nameWithOwner"],
+                number=node["number"],
+                updated_at=node["updatedAt"],
             )
+            for node in data["nodes"]
+        ]
         page_info = data["pageInfo"]
         if not page_info["hasNextPage"]:
             return results
         after = page_info["endCursor"]
+
+
+def board_pr_details(host: str, ids: list[str]) -> list[PullRequestSummary]:
+    """The per-PR detail `zh board` needs (review decision, aggregate CI
+    state, last comment) for the given PR node ids, in one GraphQL call —
+    keep `ids` to about BOARD_DETAILS_BATCH_SIZE so the query stays cheap."""
+    args = ["gh", "api", "--hostname", host, "graphql", "-f", f"query={_BOARD_PR_DETAILS_QUERY}"]
+    for pr_id in ids:
+        args += ["-f", f"ids[]={pr_id}"]
+    results: list[PullRequestSummary] = []
+    for node in _run_json_retrying(args)["data"]["nodes"]:
+        if not node:
+            continue
+        comments = node["comments"]["nodes"]
+        last_comment = comments[-1] if comments else None
+        commit_nodes = node["commits"]["nodes"]
+        rollup = (commit_nodes[0]["commit"].get("statusCheckRollup") if commit_nodes else None) or {}
+        results.append(
+            PullRequestSummary(
+                number=node["number"],
+                title=node["title"],
+                url=node["url"],
+                state="OPEN",
+                is_draft=node["isDraft"],
+                updated_at=node["updatedAt"],
+                repo=node["repository"]["nameWithOwner"],
+                review_decision=node.get("reviewDecision") or "",
+                ci_state=_ROLLUP_STATE_TO_CI_STATE.get(rollup.get("state"), "none"),
+                created_at=node["createdAt"],
+                comment_count=node["comments"]["totalCount"],
+                last_comment_at=(last_comment or {}).get("createdAt"),
+                last_comment_author=((last_comment or {}).get("author") or {}).get("login"),
+            )
+        )
+    return results
 
 
 @dataclass
@@ -566,25 +632,52 @@ class GhAccount:
     active: bool
 
 
-def list_gh_accounts() -> list[GhAccount]:
+def list_gh_accounts(host: str = "github.com") -> list[GhAccount]:
     try:
         data = _run_json(["gh", "auth", "status", "--json", "hosts"])
     except ZithubError:
         return []
     return [
         GhAccount(login=a.get("login", ""), active=bool(a.get("active")))
-        for a in data.get("hosts", {}).get("github.com", [])
+        for a in data.get("hosts", {}).get(host, [])
     ]
 
 
-def current_login() -> str | None:
-    """The active gh account's login, or None if `gh auth status` has
-    nothing active — used by `zh board` to tell "you last commented" (so
-    the PR is genuinely waiting on someone else) from "someone else did"."""
-    for account in list_gh_accounts():
+def current_login(host: str = "github.com") -> str | None:
+    """The active gh account's login on `host`, or None if `gh auth status`
+    has nothing active there — used by `zh board` to tell "you last
+    commented" (so the PR is genuinely waiting on someone else) from
+    "someone else did"."""
+    for account in list_gh_accounts(host):
         if account.active:
             return account.login
     return None
+
+
+def _remote_host() -> str | None:
+    """The hostname in origin's remote URL (https://, ssh://, or scp-style
+    git@host:owner/repo), or None if there's no origin or it doesn't parse.
+    A dotless host is treated as an ssh config alias (e.g. `github-work`)
+    rather than a real GitHub site, and ignored."""
+    url = _origin_url()
+    if url is None:
+        return None
+    if "://" in url:
+        host = urllib.parse.urlparse(url).hostname
+    else:
+        match = re.match(r"^(?:[^@/]+@)?([^:/]+):", url)
+        host = match.group(1) if match else None
+    if not host or "." not in host:
+        return None
+    return host.lower()
+
+
+def current_host() -> str:
+    """The GitHub site zh is working against: $GH_HOST if set (same
+    override gh itself honors), else origin's host, else github.com.
+    Resolved locally so `zh board`'s read-only commands pick the right
+    per-host db without a gh call."""
+    return os.environ.get("GH_HOST") or _remote_host() or "github.com"
 
 
 _REMOTE_OWNER_RE = re.compile(r"[:/]([^/:@]+)/[^/]+/?$")
@@ -1089,7 +1182,7 @@ class PullRequestSummary:
     is_draft: bool
     updated_at: str
     repo: str | None = None
-    # populated only by board_prs(), for `zh board` — the staleness
+    # populated only by board_pr_details(), for `zh board` — the staleness
     # signals that a plain `gh pr list`/`gh search prs` doesn't return.
     review_decision: str = ""
     ci_state: str = ""

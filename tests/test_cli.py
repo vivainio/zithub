@@ -476,51 +476,89 @@ def test_check_multiple_prs_reports_each_and_aggregates_failure(fake_cli, capsys
 # ---------------------------------------------------------------------------
 # board — local sqlite cache of open PRs
 
-def test_board_sync_then_list_and_query(fake_cli, capsys):
-    from zithub import board, gh as gh_mod
+def _board_list_args(host):
+    from zithub import gh as gh_mod
 
+    return ["gh", "api", "--hostname", host, "graphql", "-f", f"query={gh_mod._BOARD_PR_LIST_QUERY}", "-F", "q=is:pr is:open author:@me"]
+
+
+def _board_details_args(host, ids):
+    from zithub import gh as gh_mod
+
+    args = ["gh", "api", "--hostname", host, "graphql", "-f", f"query={gh_mod._BOARD_PR_DETAILS_QUERY}"]
+    for i in ids:
+        args += ["-f", f"ids[]={i}"]
+    return args
+
+
+def _board_list_json(*refs):
+    return json.dumps(
+        {
+            "data": {
+                "search": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [
+                        {"id": pr_id, "number": n, "updatedAt": updated, "repository": {"nameWithOwner": "acme/widgets"}}
+                        for pr_id, n, updated in refs
+                    ],
+                }
+            }
+        }
+    )
+
+
+def _board_detail_node(pr_id, number, updated="2026-09-01T00:00:00Z", rollup="SUCCESS"):
+    return {
+        "id": pr_id,
+        "number": number,
+        "title": f"Fix widget {number}",
+        "url": f"https://github.com/acme/widgets/pull/{number}",
+        "isDraft": False,
+        "reviewDecision": "APPROVED",
+        "createdAt": "2026-08-01T00:00:00Z",
+        "updatedAt": updated,
+        "repository": {"nameWithOwner": "acme/widgets"},
+        "comments": {
+            "totalCount": 1,
+            "nodes": [{"createdAt": "2026-09-10T00:00:00Z", "author": {"login": "reviewer1"}}],
+        },
+        "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": rollup}}}]},
+    }
+
+
+def _set_auth_status(fake_cli):
     fake_cli.set(
-        ["gh", "api", "graphql", "-f", f"query={gh_mod._BOARD_PRS_QUERY}", "-F", "q=is:pr is:open author:@me"],
+        ["gh", "auth", "status", "--json", "hosts"],
         stdout=json.dumps(
             {
-                "data": {
-                    "search": {
-                        "pageInfo": {"hasNextPage": False, "endCursor": None},
-                        "nodes": [
-                            {
-                                "number": 1,
-                                "title": "Fix widget",
-                                "url": "https://github.com/acme/widgets/pull/1",
-                                "isDraft": False,
-                                "reviewDecision": "APPROVED",
-                                "createdAt": "2026-08-01T00:00:00Z",
-                                "updatedAt": "2026-09-01T00:00:00Z",
-                                "repository": {"nameWithOwner": "acme/widgets"},
-                                "comments": {
-                                    "totalCount": 1,
-                                    "nodes": [
-                                        {"createdAt": "2026-09-10T00:00:00Z", "author": {"login": "reviewer1"}}
-                                    ],
-                                },
-                                "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]},
-                            }
-                        ],
-                    }
+                "hosts": {
+                    "github.com": [{"login": "vivainio", "active": True}],
+                    "ghe.example.com": [{"login": "vvainio", "active": True}],
                 }
             }
         ),
     )
+
+
+def test_board_sync_then_list_and_query(fake_cli, capsys, monkeypatch):
+    from zithub import board
+
+    monkeypatch.delenv("GH_HOST", raising=False)
+    fake_cli.set(["git", "remote", "get-url", "origin"], stdout="git@ghe.example.com:acme/widgets.git")
+    fake_cli.set(_board_list_args("ghe.example.com"), stdout=_board_list_json(("PR_1", 1, "2026-09-01T00:00:00Z")))
     fake_cli.set(
-        ["gh", "auth", "status", "--json", "hosts"],
-        stdout=json.dumps({"hosts": {"github.com": [{"login": "vivainio", "active": True}]}}),
+        _board_details_args("ghe.example.com", ["PR_1"]),
+        stdout=json.dumps({"data": {"nodes": [_board_detail_node("PR_1", 1)]}}),
     )
+    _set_auth_status(fake_cli)
 
     rc = run(["board", "sync"])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "synced 1 open PR" in out
-    assert board.list_board()[0].last_comment_author == "reviewer1"
-    assert board.get_login() == "vivainio"
+    assert "synced 1 open PR(s) from ghe.example.com (1 refreshed, 0 unchanged)" in out
+    assert board.list_board("ghe.example.com")[0].last_comment_author == "reviewer1"
+    assert board.get_login("ghe.example.com") == "vvainio"
+    assert board.list_board("github.com") == []
 
     rc = run(["board"])
     out = capsys.readouterr().out
@@ -536,15 +574,58 @@ def test_board_sync_then_list_and_query(fake_cli, capsys):
     assert "success" in out
 
 
-def test_board_query_rejects_write_statements(fake_cli, capsys):
+def test_board_sync_skips_unchanged_and_resumes_after_failure(fake_cli, capsys, monkeypatch):
+    from zithub import board
+
+    monkeypatch.setenv("GH_HOST", "github.com")
+    monkeypatch.setattr("zithub.gh.BOARD_DETAILS_BATCH_SIZE", 1)
+    _set_auth_status(fake_cli)
+    refs = [("PR_1", 1, "t1"), ("PR_2", 2, "t1"), ("PR_3", 3, "t1")]
+    fake_cli.set(_board_list_args("github.com"), stdout=_board_list_json(*refs))
+    fake_cli.set(
+        _board_details_args("github.com", ["PR_1"]),
+        stdout=json.dumps({"data": {"nodes": [_board_detail_node("PR_1", 1, updated="t1")]}}),
+    )
+    fake_cli.set(
+        _board_details_args("github.com", ["PR_2"]),
+        stdout=json.dumps({"data": {"nodes": [_board_detail_node("PR_2", 2, updated="t1", rollup="PENDING")]}}),
+    )
+    fake_cli.fail(_board_details_args("github.com", ["PR_3"]), stderr="gh: Not Found (HTTP 404)")
+
+    rc = run(["board", "sync"])
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "saved 2/3 PR(s) needing refresh" in err
+    assert sorted(r.number for r in board.list_board("github.com")) == [1, 2]
+
+    # Re-run: #1 is unchanged and skipped; #2's CI was pending so it's
+    # refetched; #3 was never saved so it's fetched now.
+    fake_cli.calls.clear()
+    fake_cli._responses.pop(tuple(_board_details_args("github.com", ["PR_3"])))
+    fake_cli.set(
+        _board_details_args("github.com", ["PR_3"]),
+        stdout=json.dumps({"data": {"nodes": [_board_detail_node("PR_3", 3, updated="t1")]}}),
+    )
+    rc = run(["board", "sync"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "synced 3 open PR(s) from github.com (2 refreshed, 1 unchanged)" in out
+    assert _board_details_args("github.com", ["PR_1"]) not in fake_cli.calls
+    assert sorted(r.number for r in board.list_board("github.com")) == [1, 2, 3]
+
+
+def test_board_query_rejects_write_statements(fake_cli, capsys, monkeypatch):
+    monkeypatch.setenv("GH_HOST", "github.com")
     rc = run(["board", "query", "delete from prs"])
     err = capsys.readouterr().err
     assert rc == 1
     assert "only SELECT/WITH queries are allowed" in err
 
 
-def test_board_focus_groups_by_what_needs_action(capsys):
+def test_board_focus_groups_by_what_needs_action(capsys, monkeypatch):
     from zithub import board, gh as gh_mod
+
+    monkeypatch.setenv("GH_HOST", "github.com")
 
     def pr(number, **overrides):
         fields = dict(
@@ -566,6 +647,7 @@ def test_board_focus_groups_by_what_needs_action(capsys):
         return gh_mod.PullRequestSummary(**fields)
 
     board.sync(
+        "github.com",
         [
             pr(1, ci_state="failed"),  # fix CI
             pr(2, last_comment_author="someone_else", last_comment_at="2026-09-05T00:00:00Z"),  # needs your reply
@@ -589,7 +671,8 @@ def test_board_focus_groups_by_what_needs_action(capsys):
     assert "waiting on others: 1 PR(s)" in out
 
 
-def test_board_bare_with_nothing_synced(capsys):
+def test_board_bare_with_nothing_synced(capsys, monkeypatch):
+    monkeypatch.setenv("GH_HOST", "github.com")
     rc = run(["board"])
     out = capsys.readouterr().out
     assert rc == 0

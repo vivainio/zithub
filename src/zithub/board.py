@@ -30,8 +30,10 @@ def _data_dir() -> str:
     return os.path.join(base, "zithub")
 
 
-def db_path() -> str:
-    return os.path.join(_data_dir(), "board.sqlite")
+def db_path(host: str) -> str:
+    """One db per GitHub site (github.com, a GHES host, ...), since "your
+    open PRs" — and which login is "you" — differ per site."""
+    return os.path.join(_data_dir(), "boards", f"{host}.sqlite")
 
 
 _SCHEMA = """
@@ -59,20 +61,52 @@ CREATE TABLE IF NOT EXISTS meta (
 """
 
 
-def _connect() -> sqlite3.Connection:
-    os.makedirs(_data_dir(), exist_ok=True)
-    conn = sqlite3.connect(db_path())
+def _connect(host: str) -> sqlite3.Connection:
+    path = db_path(host)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
     return conn
 
 
-def sync(prs: list[gh.PullRequestSummary], synced_at: str, login: str | None = None) -> None:
+def sync(
+    host: str, prs: list[gh.PullRequestSummary], synced_at: str, login: str | None = None
+) -> None:
     """Replace the table's contents with exactly `prs` — the scope is
     "your currently-open PRs", so a PR merged/closed since the last sync
-    should simply disappear rather than linger as a stale row. `login` (your
-    active gh account) is stashed in `meta` so `zh board focus` can tell
-    "you last commented" from "someone else did" without its own gh call."""
+    should simply disappear rather than linger as a stale row."""
+    prune(host, {(p.repo, p.number) for p in prs})
+    upsert(host, prs, synced_at)
+    if login:
+        set_login(host, login)
+
+
+def cached_versions(host: str) -> dict[tuple[str, int], tuple[str, str]]:
+    """(repo, number) -> (updated_at, ci_state) for every cached PR — what
+    `zh board sync` compares against to skip PRs that haven't changed."""
+    with _connect(host) as conn:
+        return {
+            (r["repo"], r["number"]): (r["updated_at"], r["ci_state"])
+            for r in conn.execute("SELECT repo, number, updated_at, ci_state FROM prs")
+        }
+
+
+def prune(host: str, keep: set[tuple[str, int]]) -> None:
+    """Drop every cached PR not in `keep` (i.e. merged/closed since the
+    last sync)."""
+    with _connect(host) as conn:
+        stale = [
+            (r["repo"], r["number"])
+            for r in conn.execute("SELECT repo, number FROM prs")
+            if (r["repo"], r["number"]) not in keep
+        ]
+        conn.executemany("DELETE FROM prs WHERE repo = ? AND number = ?", stale)
+
+
+def upsert(host: str, prs: list[gh.PullRequestSummary], synced_at: str) -> None:
+    """Insert or refresh `prs` — committed per call, so a sync that fails
+    partway keeps every batch it already fetched."""
     rows = [
         (
             p.repo,
@@ -92,21 +126,22 @@ def sync(prs: list[gh.PullRequestSummary], synced_at: str, login: str | None = N
         )
         for p in prs
     ]
-    with _connect() as conn:
-        conn.execute("DELETE FROM prs")
-        conn.executemany(
-            "INSERT INTO prs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            rows,
+    with _connect(host) as conn:
+        conn.executemany("INSERT OR REPLACE INTO prs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+
+
+def set_login(host: str, login: str) -> None:
+    """Stash your active gh login so `zh board focus` can tell "you last
+    commented" from "someone else did" without its own gh call."""
+    with _connect(host) as conn:
+        conn.execute(
+            "INSERT INTO meta VALUES ('login', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (login,),
         )
-        if login:
-            conn.execute(
-                "INSERT INTO meta VALUES ('login', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (login,),
-            )
 
 
-def get_login() -> str | None:
-    with _connect() as conn:
+def get_login(host: str) -> str | None:
+    with _connect(host) as conn:
         row = conn.execute("SELECT value FROM meta WHERE key = 'login'").fetchone()
         return row["value"] if row else None
 
@@ -125,10 +160,10 @@ class BoardRow:
     last_comment_author: str | None
 
 
-def list_board() -> list[BoardRow]:
+def list_board(host: str) -> list[BoardRow]:
     """Every synced PR, oldest activity first — so a stagnated PR sorts to
     the top without needing a separate "stale" query."""
-    with _connect() as conn:
+    with _connect(host) as conn:
         cur = conn.execute(
             "SELECT repo, number, title, url, is_draft, review_decision, ci_state, "
             "last_activity_at, comment_count, last_comment_author "
@@ -151,7 +186,7 @@ def list_board() -> list[BoardRow]:
         ]
 
 
-def run_query(sql: str) -> tuple[list[str], list[tuple]]:
+def run_query(host: str, sql: str) -> tuple[list[str], list[tuple]]:
     """Runs a read-only `SELECT`/`WITH` query against the board db and
     returns (column names, rows). Anything else (INSERT/UPDATE/DELETE/etc,
     including via a stacked statement) is rejected — this is meant for ad
@@ -159,7 +194,7 @@ def run_query(sql: str) -> tuple[list[str], list[tuple]]:
     stripped = sql.strip()
     if not stripped or not stripped.lstrip().upper().startswith(("SELECT", "WITH")):
         raise BoardError("only SELECT/WITH queries are allowed")
-    with _connect() as conn:
+    with _connect(host) as conn:
         conn.execute("PRAGMA query_only = ON")
         cur = conn.execute(stripped)
         columns = [d[0] for d in cur.description] if cur.description else []

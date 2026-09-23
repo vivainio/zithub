@@ -36,7 +36,9 @@ zh issues              # your open issues in this repo, or (outside a repo) your
 
 zh board sync          # fetch every open PR you authored (any repo) — review decision,
                         # aggregate CI state, comment count/last commenter — into a local
-                        # sqlite db (one GraphQL call, not one `gh pr view` per PR)
+                        # sqlite db. Incremental: only PRs that are new, updated, or had
+                        # pending/failed CI are refetched, in batches saved as they land —
+                        # after an error, just re-run it. --full refetches everything
 zh board               # synced PRs, oldest-activity first (--stale-days N to filter)
 zh board focus         # the same PRs grouped by what to do: fix CI, needs your reply
                         # (someone else commented last), ready to merge (approved + green
@@ -93,7 +95,11 @@ anything but a `SELECT`/`WITH` statement or a SQL error; the plain status
 commands (`zh status`, `zh ci`, `zh my`, `zh review`, `zh issues`, `zh
 board`, `zh board focus`) exit 0 regardless of what they report (they're
 informational). `zh board` is local-only and never live — run `zh board
-sync` first, and again whenever the synced data might be stale.
+sync` first, and again whenever the synced data might be stale. There's one
+board per GitHub site (github.com, a GHES host, ...): every `zh board`
+command uses the current site — `$GH_HOST` if set, else the host of the
+repo's origin remote, else github.com — so sync separately from a checkout
+on each site you use.
 
 ## Install
 

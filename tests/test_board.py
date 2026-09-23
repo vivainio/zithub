@@ -8,6 +8,8 @@ import pytest
 
 from zithub import board, gh
 
+H = "github.com"
+
 
 def _pr(number, **overrides):
     fields = dict(
@@ -30,47 +32,47 @@ def _pr(number, **overrides):
 
 
 def test_list_board_empty():
-    assert board.list_board() == []
+    assert board.list_board(H) == []
 
 
 def test_get_login_defaults_to_none():
-    assert board.get_login() is None
+    assert board.get_login(H) is None
 
 
 def test_sync_stores_login_for_later_syncs():
-    board.sync([_pr(1)], synced_at="t1", login="vivainio")
-    assert board.get_login() == "vivainio"
+    board.sync(H, [_pr(1)], synced_at="t1", login="vivainio")
+    assert board.get_login(H) == "vivainio"
 
 
 def test_sync_then_list_sorts_oldest_activity_first():
     old = _pr(1, updated_at="2026-01-01T00:00:00Z")
     recent = _pr(2, updated_at="2026-09-01T00:00:00Z")
-    board.sync([recent, old], synced_at="2026-09-22T00:00:00Z")
+    board.sync(H, [recent, old], synced_at="2026-09-22T00:00:00Z")
 
-    rows = board.list_board()
+    rows = board.list_board(H)
     assert [r.number for r in rows] == [1, 2]
 
 
 def test_sync_uses_last_comment_over_updated_at_for_activity():
     pr = _pr(1, updated_at="2026-01-01T00:00:00Z", last_comment_at="2026-09-01T00:00:00Z")
-    board.sync([pr], synced_at="2026-09-22T00:00:00Z")
+    board.sync(H, [pr], synced_at="2026-09-22T00:00:00Z")
 
-    [row] = board.list_board()
+    [row] = board.list_board(H)
     assert row.last_activity_at == "2026-09-01T00:00:00Z"
 
 
 def test_sync_replaces_previous_contents():
-    board.sync([_pr(1)], synced_at="t1")
-    board.sync([_pr(2)], synced_at="t2")
+    board.sync(H, [_pr(1)], synced_at="t1")
+    board.sync(H, [_pr(2)], synced_at="t2")
 
-    rows = board.list_board()
+    rows = board.list_board(H)
     assert [r.number for r in rows] == [2]
 
 
 def test_run_query_selects_synced_data():
-    board.sync([_pr(1, ci_state="failed")], synced_at="t1")
+    board.sync(H, [_pr(1, ci_state="failed")], synced_at="t1")
 
-    columns, rows = board.run_query("select number, ci_state from prs")
+    columns, rows = board.run_query(H, "select number, ci_state from prs")
     assert columns == ["number", "ci_state"]
     assert list(rows[0]) == [1, "failed"]
 
@@ -78,4 +80,24 @@ def test_run_query_selects_synced_data():
 @pytest.mark.parametrize("sql", ["delete from prs", "update prs set title='x'", "drop table prs"])
 def test_run_query_rejects_non_select(sql):
     with pytest.raises(board.BoardError):
-        board.run_query(sql)
+        board.run_query(H, sql)
+
+
+def test_boards_are_separate_per_host():
+    board.sync("github.com", [_pr(1)], synced_at="t1", login="vivainio")
+    board.sync("ghe.example.com", [_pr(2)], synced_at="t1", login="vvainio")
+
+    assert [r.number for r in board.list_board("github.com")] == [1]
+    assert [r.number for r in board.list_board("ghe.example.com")] == [2]
+    assert board.get_login("ghe.example.com") == "vvainio"
+
+
+def test_prune_and_upsert_keep_untouched_rows():
+    board.sync(H, [_pr(1), _pr(2), _pr(3)], synced_at="t1")
+    board.prune(H, {("acme/widgets", 1), ("acme/widgets", 2)})
+    board.upsert(H, [_pr(2, ci_state="failed")], synced_at="t2")
+
+    assert board.cached_versions(H) == {
+        ("acme/widgets", 1): ("2026-09-01T00:00:00Z", "success"),
+        ("acme/widgets", 2): ("2026-09-01T00:00:00Z", "failed"),
+    }

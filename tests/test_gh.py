@@ -506,3 +506,47 @@ def test_create_release_builds_command(fake_cli):
     )
     url = gh.create_release(tag="v1.0.0", notes="notes here", title="v1.0.0", target="main")
     assert url == "https://github.com/acme/widgets/releases/tag/v1.0.0"
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        ("https://github.com/acme/widgets.git", "github.com"),
+        ("git@ghe.example.com:acme/widgets.git", "ghe.example.com"),
+        ("ssh://git@GHE.example.com:2222/acme/widgets", "ghe.example.com"),
+        ("git@github-work:acme/widgets.git", "github.com"),  # ssh alias, not a real host
+    ],
+)
+def test_current_host_from_origin(fake_cli, monkeypatch, url, expected):
+    monkeypatch.delenv("GH_HOST", raising=False)
+    fake_cli.set(["git", "remote", "get-url", "origin"], stdout=url)
+    assert gh.current_host() == expected
+
+
+def test_current_host_prefers_gh_host_env(fake_cli, monkeypatch):
+    monkeypatch.setenv("GH_HOST", "ghe.example.com")
+    assert gh.current_host() == "ghe.example.com"
+
+
+def test_current_host_defaults_to_github_com_outside_a_repo(fake_cli, monkeypatch):
+    monkeypatch.delenv("GH_HOST", raising=False)
+    fake_cli.fail(["git", "remote", "get-url", "origin"], stderr="not a git repository")
+    assert gh.current_host() == "github.com"
+
+
+def test_board_pr_details_retries_transient_gateway_errors(fake_cli, monkeypatch):
+    monkeypatch.setattr(gh.time, "sleep", lambda _s: None)
+    args = ["gh", "api", "--hostname", "github.com", "graphql", "-f", f"query={gh._BOARD_PR_DETAILS_QUERY}", "-f", "ids[]=PR_1"]
+    fake_cli.fail(args, stderr="gh: HTTP 502")
+    fake_cli.fail(args, stderr="stream error: stream ID 1; CANCEL; received from peer")
+    fake_cli.set(args, stdout='{"data": {"nodes": [null]}}')
+    assert gh.board_pr_details("github.com", ["PR_1"]) == []
+
+
+def test_board_pr_details_does_not_retry_other_errors(fake_cli, monkeypatch):
+    monkeypatch.setattr(gh.time, "sleep", lambda _s: None)
+    args = ["gh", "api", "--hostname", "github.com", "graphql", "-f", f"query={gh._BOARD_PR_DETAILS_QUERY}", "-f", "ids[]=PR_1"]
+    fake_cli.fail(args, stderr="gh: Not Found (HTTP 404)")
+    fake_cli.set(args, stdout='{"data": {"nodes": []}}')
+    with pytest.raises(gh.ZithubError, match="404"):
+        gh.board_pr_details("github.com", ["PR_1"])
