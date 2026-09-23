@@ -4,7 +4,7 @@ conftest.py, which points XDG_DATA_HOME at a temp dir)."""
 
 from __future__ import annotations
 
-from typing import Any
+import dataclasses
 
 import pytest
 
@@ -14,23 +14,21 @@ H = "github.com"
 
 
 def _pr(number, **overrides):
-    fields: dict[str, Any] = dict(
+    base = gh.BoardPr(
+        repo="acme/widgets",
         number=number,
         title=f"PR {number}",
         url=f"https://github.com/acme/widgets/pull/{number}",
-        state="OPEN",
         is_draft=False,
-        updated_at="2026-09-01T00:00:00Z",
-        repo="acme/widgets",
         review_decision="",
         ci_state="success",
         created_at="2026-08-01T00:00:00Z",
+        updated_at="2026-09-01T00:00:00Z",
         comment_count=0,
         last_comment_at=None,
         last_comment_author=None,
     )
-    fields.update(overrides)
-    return gh.PullRequestSummary(**fields)
+    return dataclasses.replace(base, **overrides)
 
 
 def test_list_board_empty():

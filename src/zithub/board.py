@@ -71,12 +71,12 @@ def _connect(host: str) -> sqlite3.Connection:
 
 
 def sync(
-    host: str, prs: list[gh.PullRequestSummary], synced_at: str, login: str | None = None
+    host: str, prs: list[gh.BoardPr], synced_at: str, login: str | None = None
 ) -> None:
     """Replace the table's contents with exactly `prs` — the scope is
     "your currently-open PRs", so a PR merged/closed since the last sync
     should simply disappear rather than linger as a stale row."""
-    prune(host, {(p.repo or "", p.number) for p in prs})
+    prune(host, {(p.repo, p.number) for p in prs})
     upsert(host, prs, synced_at)
     if login:
         set_login(host, login)
@@ -104,7 +104,7 @@ def prune(host: str, keep: set[tuple[str, int]]) -> None:
         conn.executemany("DELETE FROM prs WHERE repo = ? AND number = ?", stale)
 
 
-def upsert(host: str, prs: list[gh.PullRequestSummary], synced_at: str) -> None:
+def upsert(host: str, prs: list[gh.BoardPr], synced_at: str) -> None:
     """Insert or refresh `prs` — committed per call, so a sync that fails
     partway keeps every batch it already fetched."""
     rows = [

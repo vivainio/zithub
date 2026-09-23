@@ -298,14 +298,33 @@ def board_pr_list(host: str) -> list[BoardPrRef]:
         after = page_info["endCursor"]
 
 
-def board_pr_details(host: str, ids: list[str]) -> list[PullRequestSummary]:
+@dataclass
+class BoardPr:
+    """An open PR with the staleness signals `zh board` caches — the ones a
+    plain `gh pr list`/`gh search prs` doesn't return."""
+
+    repo: str
+    number: int
+    title: str
+    url: str
+    is_draft: bool
+    review_decision: str
+    ci_state: str
+    created_at: str
+    updated_at: str
+    comment_count: int
+    last_comment_at: str | None
+    last_comment_author: str | None
+
+
+def board_pr_details(host: str, ids: list[str]) -> list[BoardPr]:
     """The per-PR detail `zh board` needs (review decision, aggregate CI
     state, last comment) for the given PR node ids, in one GraphQL call —
     keep `ids` to about BOARD_DETAILS_BATCH_SIZE so the query stays cheap."""
     args = ["gh", "api", "--hostname", host, "graphql", "-f", f"query={_BOARD_PR_DETAILS_QUERY}"]
     for pr_id in ids:
         args += ["-f", f"ids[]={pr_id}"]
-    results: list[PullRequestSummary] = []
+    results: list[BoardPr] = []
     for node in _run_json_retrying(args)["data"]["nodes"]:
         if not node:
             continue
@@ -314,17 +333,16 @@ def board_pr_details(host: str, ids: list[str]) -> list[PullRequestSummary]:
         commit_nodes = node["commits"]["nodes"]
         rollup = (commit_nodes[0]["commit"].get("statusCheckRollup") if commit_nodes else None) or {}
         results.append(
-            PullRequestSummary(
+            BoardPr(
+                repo=node["repository"]["nameWithOwner"],
                 number=node["number"],
                 title=node["title"],
                 url=node["url"],
-                state="OPEN",
                 is_draft=node["isDraft"],
-                updated_at=node["updatedAt"],
-                repo=node["repository"]["nameWithOwner"],
                 review_decision=node.get("reviewDecision") or "",
                 ci_state=_ROLLUP_STATE_TO_CI_STATE.get(rollup.get("state"), "none"),
                 created_at=node["createdAt"],
+                updated_at=node["updatedAt"],
                 comment_count=node["comments"]["totalCount"],
                 last_comment_at=(last_comment or {}).get("createdAt"),
                 last_comment_author=((last_comment or {}).get("author") or {}).get("login"),
@@ -1182,14 +1200,6 @@ class PullRequestSummary:
     is_draft: bool
     updated_at: str
     repo: str | None = None
-    # populated only by board_pr_details(), for `zh board` — the staleness
-    # signals that a plain `gh pr list`/`gh search prs` doesn't return.
-    review_decision: str = ""
-    ci_state: str = ""
-    created_at: str = ""
-    comment_count: int = 0
-    last_comment_at: str | None = None
-    last_comment_author: str | None = None
 
 
 def my_open_prs_in_repo() -> list[PullRequestSummary]:
