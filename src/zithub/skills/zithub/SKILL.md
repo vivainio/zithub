@@ -71,6 +71,12 @@ zh repos               # local checkouts zh has seen, most-recently-seen first â
                         # of guessing a path or re-cloning it
 zh repos <query>       # ...filtered to checkouts whose repo name or path contains it
 
+zh gh <args...>        # run gh with GH_TOKEN set to the gh account that owns origin â€”
+                        # e.g. with a work account active, `zh gh pr create` in a
+                        # personal repo still acts as you; gh's active account is untouched
+zh git <args...>       # git (e.g. `zh git push`); over an https origin, authenticates as
+                        # that same account (gh's credential helper + GH_TOKEN). ssh: plain git.
+                        # Use these instead of `gh auth switch` on a 403 from the wrong account
 zh install-skills      # install this skill to $CLAUDE_CONFIG_DIR/skills/ (default ~/.claude/skills/)
 ```
 

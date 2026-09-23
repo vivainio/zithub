@@ -1145,3 +1145,90 @@ def test_bare_zh_prints_help_and_does_nothing(monkeypatch, fake_cli, capsys):
     assert exc.value.code == 0
     assert "usage: zh" in capsys.readouterr().out
     assert fake_cli.calls == []
+
+
+# ---------------------------------------------------------------------------
+# gh / git — passthrough with the repo owner's GH_TOKEN
+
+
+def _set_two_accounts(fake_cli, origin):
+    fake_cli.set(["git", "remote", "get-url", "origin"], stdout=origin)
+    fake_cli.set(
+        ["gh", "auth", "status", "--json", "hosts"],
+        stdout=json.dumps(
+            {
+                "hosts": {
+                    "github.com": [
+                        {"login": "villevai_Basware", "active": True},
+                        {"login": "vivainio", "active": False},
+                    ]
+                }
+            }
+        ),
+    )
+    fake_cli.set(["gh", "auth", "token", "--hostname", "github.com", "--user", "vivainio"], stdout="tok-vivainio")
+
+
+@pytest.fixture
+def passthrough_calls(monkeypatch):
+    from zithub import gh as gh_mod
+
+    calls = []
+
+    def fake(args, env=None):
+        calls.append((args, env))
+        return 0
+
+    monkeypatch.setattr(gh_mod, "run_passthrough", fake)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    return calls
+
+
+def test_gh_passthrough_uses_repo_owner_token(fake_cli, passthrough_calls, monkeypatch, capsys):
+    from zithub import cli
+
+    _set_two_accounts(fake_cli, "https://github.com/vivainio/zithub.git")
+    monkeypatch.setattr("sys.argv", ["zh", "gh", "-R", "vivainio/zithub", "pr", "list"])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 0
+    [(args, env)] = passthrough_calls
+    assert args == ["gh", "-R", "vivainio/zithub", "pr", "list"]
+    assert env["GH_TOKEN"] == "tok-vivainio"
+    assert "using gh account vivainio" in capsys.readouterr().err
+
+
+def test_gh_passthrough_respects_explicit_gh_token(fake_cli, passthrough_calls, monkeypatch):
+    _set_two_accounts(fake_cli, "https://github.com/vivainio/zithub.git")
+    monkeypatch.setenv("GH_TOKEN", "mine")
+    assert run(["gh", "pr", "list"]) == 0
+    assert passthrough_calls == [(["gh", "pr", "list"], None)]
+
+
+def test_git_over_https_uses_gh_helper_and_owner_token(fake_cli, passthrough_calls):
+    _set_two_accounts(fake_cli, "https://github.com/vivainio/zithub.git")
+    assert run(["git", "push", "origin", "main"]) == 0
+    [(args, env)] = passthrough_calls
+    assert args == [
+        "git", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential", "push", "origin", "main",
+    ]
+    assert env["GH_TOKEN"] == "tok-vivainio"
+
+
+def test_git_over_ssh_is_plain_git(fake_cli, passthrough_calls):
+    _set_two_accounts(fake_cli, "git@github.com:vivainio/zithub.git")
+    assert run(["git", "push"]) == 0
+    assert passthrough_calls == [(["git", "push"], None)]
+
+
+def test_gh_passthrough_looks_up_accounts_on_origins_host(fake_cli, passthrough_calls):
+    fake_cli.set(["git", "remote", "get-url", "origin"], stdout="https://ghe.example.com/acme/widgets.git")
+    fake_cli.set(
+        ["gh", "auth", "status", "--json", "hosts"],
+        stdout=json.dumps({"hosts": {"ghe.example.com": [{"login": "acme", "active": False}]}}),
+    )
+    fake_cli.set(["gh", "auth", "token", "--hostname", "ghe.example.com", "--user", "acme"], stdout="tok-ghe")
+    assert run(["gh", "pr", "list"]) == 0
+    [(_args, env)] = passthrough_calls
+    assert env["GH_TOKEN"] == "tok-ghe"

@@ -56,7 +56,7 @@ def _run_json(args: list[str]):
     return json.loads(_run(args))
 
 
-def run_passthrough(args: list[str]) -> int:
+def run_passthrough(args: list[str], env: dict[str, str] | None = None) -> int:
     """Run a `gh` command with stdio inherited, returning its exit code.
 
     Used for actions where `gh`'s own output/prompts/exit code are exactly
@@ -64,7 +64,7 @@ def run_passthrough(args: list[str]) -> int:
     no reason to re-render what `gh` already prints well.
     """
     try:
-        return subprocess.run(args).returncode
+        return subprocess.run(args, env=env).returncode
     except FileNotFoundError as exc:
         raise ZithubError(f"`{args[0]}` not found on PATH") from exc
 
@@ -729,6 +729,16 @@ def _login_matches_owner(login: str, owner: str) -> bool:
     return False
 
 
+def _repo_owner_account() -> GhAccount | None:
+    """The logged-in gh account that owns origin (see _login_matches_owner),
+    or None if there's no origin or no such account."""
+    owner = _remote_owner()
+    if owner is None:
+        return None
+    host = _remote_host() or "github.com"
+    return next((a for a in list_gh_accounts(host) if _login_matches_owner(a.login, owner)), None)
+
+
 def ensure_gh_account_for_repo() -> str | None:
     """If this repo's owner has a logged-in gh account that isn't active,
     switch to it. Best-effort, like wazup's version of this same check: any
@@ -736,12 +746,7 @@ def ensure_gh_account_for_repo() -> str | None:
     no-op rather than an error, since this is a convenience, not something
     that should block a release on its own. Returns a human-readable notice
     if a switch happened, else None."""
-    owner = _remote_owner()
-    if owner is None:
-        return None
-
-    accounts = list_gh_accounts()
-    match = next((a for a in accounts if _login_matches_owner(a.login, owner)), None)
+    match = _repo_owner_account()
     if match is None or match.active:
         return None
 
@@ -749,7 +754,28 @@ def ensure_gh_account_for_repo() -> str | None:
         _run(["gh", "auth", "switch", "--hostname", "github.com", "--user", match.login])
     except ZithubError:
         return None
-    return f"switched active gh account to {match.login} (owner of {owner}'s repos)"
+    return f"switched active gh account to {match.login} (owner of {_remote_owner()}'s repos)"
+
+
+def repo_owner_token() -> tuple[GhAccount, str] | None:
+    """The gh account that owns origin, and its token — for `zh gh` /
+    `zh git` to pass along as GH_TOKEN, so the command runs as the right
+    account without switching gh's active one globally. None when there's
+    no origin or no matching account is logged in."""
+    match = _repo_owner_account()
+    if match is None:
+        return None
+    host = _remote_host() or "github.com"
+    try:
+        token = _run(["gh", "auth", "token", "--hostname", host, "--user", match.login])
+    except ZithubError:
+        return None
+    return match, token
+
+
+def origin_is_https() -> bool:
+    url = _origin_url()
+    return url is not None and url.startswith("https://")
 
 
 @dataclass

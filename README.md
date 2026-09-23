@@ -31,6 +31,8 @@ zh my             # your open PRs across all repos, plus recent closed/merged
 zh my --this      # ...just for the current repo
 zh review         # PRs awaiting your review, updated in the last 7 days
 zh issues         # your open issues in this repo, or recent activity outside one
+zh gh <args...>   # gh <args...> as this repo owner's gh account (GH_TOKEN; no global switch)
+zh git <args...>  # git <args...>; over https, as this repo owner's gh account (same)
 
 zh board sync             # fetch your open PRs + activity (CI, review, comments) into a local sqlite db
                           # (incremental: only new/updated PRs or unsettled CI; --full refetches all)

@@ -1644,6 +1644,47 @@ def _record_repo_seen() -> None:
     registry.record_seen(path, name, branch)
 
 
+def _owner_token_env() -> dict[str, str] | None:
+    """os.environ plus GH_TOKEN for the gh account that owns origin, or None
+    (inherit as-is) when there's no such account or the caller already set
+    GH_TOKEN/GITHUB_TOKEN themselves."""
+    if os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"):
+        return None
+    found = gh.repo_owner_token()
+    if found is None:
+        return None
+    account, token = found
+    if not account.active:
+        print(_dim(f"using gh account {account.login} (owner of this repo)"), file=sys.stderr)
+    return {**os.environ, "GH_TOKEN": token}
+
+
+def cmd_gh(gh_args: list[str]) -> int:
+    return gh.run_passthrough(["gh", *gh_args], env=_owner_token_env())
+
+
+# Makes git authenticate through gh's credential helper — which honors
+# GH_TOKEN — even if the user's git config names some other helper.
+_GH_CREDENTIAL_HELPER = ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"]
+
+
+def cmd_git(git_args: list[str]) -> int:
+    """git over an https origin as the repo owner's gh account (push, fetch,
+    pull of a private repo, ...). With an ssh origin the ssh key decides
+    the account, so it's plain git."""
+    env = _owner_token_env() if gh.origin_is_https() else None
+    if env is None:
+        return gh.run_passthrough(["git", *git_args])
+    return gh.run_passthrough(["git", *_GH_CREDENTIAL_HELPER, *git_args], env=env)
+
+
+# Commands whose arguments go verbatim to another CLI. argparse can't take
+# a REMAINDER that starts with an option (`zh gh --version`, `zh git -C x`),
+# so main() dispatches these before parsing; their subparsers exist only so
+# they show up in `zh --help`.
+_PASSTHROUGH_COMMANDS = {"gh": cmd_gh, "git": cmd_git}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zh", description="what's up with this repo, plus the gh PR/release actions"
@@ -1827,10 +1868,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_install_skills.set_defaults(func=skills.install_skills_command, needs_gh=False)
 
+    p_gh = sub.add_parser(
+        "gh", add_help=False, help="run gh with GH_TOKEN set to this repo owner's account (no global switch)"
+    )
+    p_gh.add_argument("args", nargs=argparse.REMAINDER)
+    p_gh.set_defaults(func=lambda a: cmd_gh(a.args), needs_gh=False)
+
+    p_git = sub.add_parser(
+        "git", add_help=False, help="run git; over https, as this repo owner's gh account (no global switch)"
+    )
+    p_git.add_argument("args", nargs=argparse.REMAINDER)
+    p_git.set_defaults(func=lambda a: cmd_git(a.args), needs_gh=False)
+
     return parser
 
 
 def main() -> None:
+    argv = sys.argv[1:]
+    if argv and argv[0] in _PASSTHROUGH_COMMANDS:
+        sys.exit(_PASSTHROUGH_COMMANDS[argv[0]](argv[1:]))
     parser = build_parser()
     args = parser.parse_args()
     if args.command is None:
