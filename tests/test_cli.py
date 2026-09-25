@@ -564,7 +564,8 @@ def test_board_sync_then_list_and_query(fake_cli, capsys, monkeypatch):
     rc = run(["board"])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "acme/widgets#1" in out
+    assert "  acme/widgets (1)" in out
+    assert "    #1  Fix widget 1" in out
     assert "review: approved" in out
     assert "last comment: reviewer1" in out
 
@@ -649,6 +650,8 @@ def test_board_focus_groups_by_what_needs_action(capsys, monkeypatch):
         "github.com",
         [
             pr(1, ci_state="failed"),  # fix CI
+            pr(5, ci_state="failed", repo="acme/gadgets"),  # fix CI, other repo
+            pr(6, ci_state="failed"),  # fix CI
             pr(2, last_comment_author="someone_else", last_comment_at="2026-09-05T00:00:00Z"),  # needs your reply
             pr(3, review_decision="APPROVED", ci_state="success"),  # ready to merge
             pr(4, review_decision="REVIEW_REQUIRED"),  # waiting on others
@@ -661,8 +664,11 @@ def test_board_focus_groups_by_what_needs_action(capsys, monkeypatch):
     out = capsys.readouterr().out
 
     assert rc == 0
-    assert "fix CI (1)" in out
-    assert "#1" in out
+    assert "fix CI (3)" in out
+    # grouped per repo, biggest pile first, repo name not repeated per row
+    assert out.index("  acme/widgets (2)") < out.index("    #1  PR 1") < out.index("    #6  PR 6")
+    assert out.index("    #6  PR 6") < out.index("  acme/gadgets (1)") < out.index("    #5  PR 5")
+    assert "acme/widgets#1" not in out
     assert "needs your reply (1)" in out
     assert "#2" in out
     assert "ready to merge (1)" in out

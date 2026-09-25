@@ -654,18 +654,31 @@ def _days_idle(iso_timestamp: str) -> int:
 
 
 def _print_board_row(r: board.BoardRow) -> None:
+    """One PR under its repo header (see _print_board_rows_by_repo)."""
     idle = _days_idle(r.last_activity_at)
     idle_label = f"idle {idle}d"
     idle_label = _yellow(idle_label) if idle >= 7 else idle_label
     draft = " (draft)" if r.is_draft else ""
     review = r.review_decision.lower().replace("_", " ") or "no review"
     last_comment = f"  last comment: {r.last_comment_author}" if r.last_comment_author else ""
-    print(f"{r.repo}#{r.number}{draft}  {r.title}")
+    print(f"    #{r.number}{draft}  {r.title}")
     print(
-        f"    {idle_label}  ci: {r.ci_state}  review: {review}  "
+        f"        {idle_label}  ci: {r.ci_state}  review: {review}  "
         f"comments: {r.comment_count}{last_comment}"
     )
-    print(f"    {r.url}")
+    print(f"        {r.url}")
+
+
+def _print_board_rows_by_repo(rows: list[board.BoardRow]) -> None:
+    """Rows grouped under a header per repo, biggest pile first; each
+    repo's rows keep their incoming (oldest-activity-first) order."""
+    by_repo: dict[str, list[board.BoardRow]] = {}
+    for r in rows:
+        by_repo.setdefault(r.repo, []).append(r)
+    for repo, repo_rows in sorted(by_repo.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        print(f"  {repo} ({len(repo_rows)})")
+        for r in repo_rows:
+            _print_board_row(r)
 
 
 def cmd_board(args: argparse.Namespace) -> int:
@@ -675,15 +688,12 @@ def cmd_board(args: argparse.Namespace) -> int:
         print(f"no synced PRs for {host} — run `zh board sync` first  ({board.db_path(host)})")
         return 0
     stale_days = args.stale_days
-    shown = 0
-    for r in rows:
-        idle = _days_idle(r.last_activity_at)
-        if stale_days is not None and idle < stale_days:
-            continue
-        shown += 1
-        _print_board_row(r)
-    if stale_days is not None and shown == 0:
-        print(f"no PRs idle >= {stale_days}d")
+    if stale_days is not None:
+        rows = [r for r in rows if _days_idle(r.last_activity_at) >= stale_days]
+        if not rows:
+            print(f"no PRs idle >= {stale_days}d")
+            return 0
+    _print_board_rows_by_repo(rows)
     return 0
 
 
@@ -717,8 +727,7 @@ def cmd_board_focus(args: argparse.Namespace) -> int:
         if not section_rows:
             return
         print(_bold(f"{title} ({len(section_rows)})"))
-        for r in section_rows:
-            _print_board_row(r)
+        _print_board_rows_by_repo(section_rows)
         print()
 
     _section("fix CI", fix_ci)

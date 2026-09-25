@@ -11,6 +11,7 @@ them.
 from __future__ import annotations
 
 import functools
+import html
 import json
 import os
 import re
@@ -194,9 +195,9 @@ _BOARD_PR_FIELDS = """
         createdAt
         updatedAt
         repository { nameWithOwner }
-        comments(last: 1) {
+        comments(last: 20) {
           totalCount
-          nodes { createdAt author { login } }
+          nodes { createdAt author { __typename login } }
         }
         commits(last: 1) {
           nodes { commit { statusCheckRollup { state } } }
@@ -317,26 +318,60 @@ class BoardPr:
     last_comment_author: str | None
 
 
+# Scanners and CI reporters that comment on nearly every PR but never
+# want a reply. GitHub Apps are caught by their `Bot` type already; these
+# are the ones that show up as plain users (or as Apps on older GHES).
+_KNOWN_BOT_LOGINS = {
+    "snyk-io",
+    "codescene",
+    "tfsbuild",
+    "github-advanced-security",
+    "sonarcloud",
+    "sonarqubecloud",
+    "codecov",
+    "dependabot",
+    "renovate",
+}
+
+
+def _bot_logins() -> set[str]:
+    """_KNOWN_BOT_LOGINS plus any in ZH_BOT_LOGINS (comma-separated) — for
+    org-specific machine users like a CI service account."""
+    extra = os.environ.get("ZH_BOT_LOGINS", "")
+    return _KNOWN_BOT_LOGINS | {s.strip().lower() for s in extra.split(",") if s.strip()}
+
+
+def _is_bot_author(author: dict, bot_logins: set[str]) -> bool:
+    login = (author.get("login") or "").lower()
+    return author.get("__typename") == "Bot" or login.endswith("[bot]") or login in bot_logins
+
+
 def board_pr_details(host: str, ids: list[str]) -> list[BoardPr]:
     """The per-PR detail `zh board` needs (review decision, aggregate CI
-    state, last comment) for the given PR node ids, in one GraphQL call —
-    keep `ids` to about BOARD_DETAILS_BATCH_SIZE so the query stays cheap."""
+    state, last human comment) for the given PR node ids, in one GraphQL
+    call — keep `ids` to about BOARD_DETAILS_BATCH_SIZE so the query stays
+    cheap. Bot comments are skipped when picking the last comment, since
+    "someone else commented last" is what `zh board focus` reads as
+    "needs your reply"."""
     args = ["gh", "api", "--hostname", host, "graphql", "-f", f"query={_BOARD_PR_DETAILS_QUERY}"]
     for pr_id in ids:
         args += ["-f", f"ids[]={pr_id}"]
+    bot_logins = _bot_logins()
     results: list[BoardPr] = []
     for node in _run_json_retrying(args)["data"]["nodes"]:
         if not node:
             continue
-        comments = node["comments"]["nodes"]
-        last_comment = comments[-1] if comments else None
+        human_comments = [
+            c for c in node["comments"]["nodes"] if not _is_bot_author(c.get("author") or {}, bot_logins)
+        ]
+        last_comment = human_comments[-1] if human_comments else None
         commit_nodes = node["commits"]["nodes"]
         rollup = (commit_nodes[0]["commit"].get("statusCheckRollup") if commit_nodes else None) or {}
         results.append(
             BoardPr(
                 repo=node["repository"]["nameWithOwner"],
                 number=node["number"],
-                title=node["title"],
+                title=html.unescape(node["title"]),
                 url=node["url"],
                 is_draft=node["isDraft"],
                 review_decision=node.get("reviewDecision") or "",

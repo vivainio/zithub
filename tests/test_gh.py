@@ -550,3 +550,35 @@ def test_board_pr_details_does_not_retry_other_errors(fake_cli, monkeypatch):
     fake_cli.set(args, stdout='{"data": {"nodes": []}}')
     with pytest.raises(gh.ZithubError, match="404"):
         gh.board_pr_details("github.com", ["PR_1"])
+
+
+def test_board_pr_details_skips_bot_comments_and_unescapes_title(fake_cli, monkeypatch):
+    monkeypatch.setenv("ZH_BOT_LOGINS", "Github-CI_Acme, other-ci")
+    args = ["gh", "api", "--hostname", "github.com", "graphql", "-f", f"query={gh._BOARD_PR_DETAILS_QUERY}", "-f", "ids[]=PR_1"]
+    comments = [
+        {"createdAt": "t1", "author": {"__typename": "User", "login": "reviewer1"}},
+        {"createdAt": "t2", "author": {"__typename": "Bot", "login": "some-app"}},
+        {"createdAt": "t3", "author": {"__typename": "User", "login": "snyk-io"}},
+        {"createdAt": "t4", "author": {"__typename": "User", "login": "renovate[bot]"}},
+        {"createdAt": "t5", "author": {"__typename": "User", "login": "Github-CI_Acme"}},
+    ]
+    node = {
+        "id": "PR_1",
+        "number": 1,
+        "title": "Schema &amp; marker logic",
+        "url": "https://github.com/acme/widgets/pull/1",
+        "isDraft": False,
+        "reviewDecision": None,
+        "createdAt": "t0",
+        "updatedAt": "t5",
+        "repository": {"nameWithOwner": "acme/widgets"},
+        "comments": {"totalCount": 5, "nodes": comments},
+        "commits": {"nodes": []},
+    }
+    fake_cli.set(args, stdout=json.dumps({"data": {"nodes": [node]}}))
+
+    [pr] = gh.board_pr_details("github.com", ["PR_1"])
+    assert pr.title == "Schema & marker logic"
+    assert pr.last_comment_author == "reviewer1"
+    assert pr.last_comment_at == "t1"
+    assert pr.comment_count == 5

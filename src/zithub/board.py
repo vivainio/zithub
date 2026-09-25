@@ -61,12 +61,23 @@ CREATE TABLE IF NOT EXISTS meta (
 """
 
 
+# Bump when what a synced row *means* changes (not just its columns), so
+# rows cached under the old meaning get dropped and refetched by the next
+# (otherwise incremental) sync. 1: last_comment_* skip bot comments and
+# titles are HTML-unescaped.
+_CACHE_VERSION = 1
+
+
 def _connect(host: str) -> sqlite3.Connection:
     path = db_path(host)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
+    if conn.execute("PRAGMA user_version").fetchone()[0] < _CACHE_VERSION:
+        with conn:
+            conn.execute("DELETE FROM prs")
+            conn.execute(f"PRAGMA user_version = {_CACHE_VERSION}")
     return conn
 
 

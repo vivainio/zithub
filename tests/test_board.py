@@ -101,3 +101,12 @@ def test_prune_and_upsert_keep_untouched_rows():
         ("acme/widgets", 1): ("2026-09-01T00:00:00Z", "success"),
         ("acme/widgets", 2): ("2026-09-01T00:00:00Z", "failed"),
     }
+
+
+def test_rows_cached_under_an_older_cache_version_are_dropped():
+    board.sync(H, [_pr(1)], synced_at="t1")
+    with board._connect(H) as conn:
+        conn.execute("PRAGMA user_version = 0")
+    assert board.list_board(H) == []
+    board.sync(H, [_pr(1)], synced_at="t2")
+    assert [r.number for r in board.list_board(H)] == [1]

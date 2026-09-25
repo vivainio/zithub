@@ -39,10 +39,15 @@ zh board sync          # fetch every open PR you authored (any repo) — review 
                         # sqlite db. Incremental: only PRs that are new, updated, or had
                         # pending/failed CI are refetched, in batches saved as they land —
                         # after an error, just re-run it. --full refetches everything
-zh board               # synced PRs, oldest-activity first (--stale-days N to filter)
+zh board               # synced PRs grouped per repo (biggest first), oldest-activity
+                        # first within each (--stale-days N to filter)
 zh board focus         # the same PRs grouped by what to do: fix CI, needs your reply
-                        # (someone else commented last), ready to merge (approved + green
-                        # + not draft), and a count of the rest that need nothing from you
+                        # (a human other than you commented last), ready to merge (approved
+                        # + green + not draft), and a count of the rest that need nothing
+                        # from you; rows grouped per repo within each section. Bot comments
+                        # (GitHub Apps, `[bot]`, scanners like snyk-io) are ignored; org
+                        # machine users go in ZH_BOT_LOGINS=a,b (applied at sync time, so
+                        # re-run `zh board sync --full` after changing it)
 zh board query "<SQL>" # ad hoc read-only SELECT/WITH against the synced `prs` table
 
 zh plan [pr] > plan.md       # read-only: scaffold with every thread's context (diff hunk,
