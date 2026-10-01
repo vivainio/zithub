@@ -599,4 +599,14 @@ def test_repo_activity_ranks_by_prs_plus_issues(fake_cli):
         gh.RepoActivity("acme/a", 1, 2),
         gh.RepoActivity("acme/b", 2, 0),
     ]
-    assert pr.comment_count == 5
+
+
+def test_repo_size_kb(fake_cli):
+    cmd = ["gh", "api", "repos/acme/a", "--jq", "{size: .size}"]
+    fake_cli.set(cmd, stdout=json.dumps({"size": 2048}))
+    assert gh.repo_size_kb("acme/a") == 2048
+
+
+def test_repo_size_kb_none_on_failure(fake_cli):
+    fake_cli.fail(["gh", "api", "repos/acme/a", "--jq", "{size: .size}"], stderr="404")
+    assert gh.repo_size_kb("acme/a") is None

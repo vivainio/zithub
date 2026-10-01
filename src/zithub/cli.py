@@ -593,6 +593,14 @@ def cmd_my(args: argparse.Namespace) -> int:
     return 0
 
 
+def _format_size_kb(kb: int) -> str:
+    if kb < 1024:
+        return f"{kb} KB"
+    if kb < 1024 * 1024:
+        return f"{kb / 1024:.1f} MB"
+    return f"{kb / 1024 / 1024:.1f} GB"
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     since = (date.today() - timedelta(days=args.days)).isoformat()
     try:
@@ -606,7 +614,9 @@ def cmd_stats(args: argparse.Namespace) -> int:
     scope = args.owner or "all visible repos"
     print(f"most active repos in {scope} since {since} (PRs + issues updated):")
     for a in activity[: args.limit]:
-        print(f"  {a.repo}  {a.total}  ({a.prs} PRs, {a.issues} issues)")
+        size = gh.repo_size_kb(a.repo)
+        size_txt = _format_size_kb(size) if size is not None else "?"
+        print(f"  {a.repo}  {a.total}  ({a.prs} PRs, {a.issues} issues)  {_dim(size_txt)}")
     return 0
 
 

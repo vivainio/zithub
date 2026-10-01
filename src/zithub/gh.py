@@ -1618,6 +1618,7 @@ class RepoActivity:
     repo: str
     prs: int
     issues: int
+    size_kb: int | None = None
 
     @property
     def total(self) -> int:
@@ -1647,5 +1648,12 @@ def repo_activity(owner: str | None, since: str) -> list[RepoActivity]:
 
 
 _SEARCH_ACTIVITY_LIMIT = "1000"
-    progress = f"stopped after {completed}/{len(all_steps)} steps"
-    return f"{job['name']} ({progress}, {dur})" if dur else f"{job['name']} ({progress})"
+
+
+def repo_size_kb(name_with_owner: str) -> int | None:
+    """GitHub's reported repo size in KB, or None if it can't be fetched
+    (e.g. a repo the token can see in search but not read)."""
+    try:
+        return _run_json(["gh", "api", f"repos/{name_with_owner}", "--jq", "{size: .size}"])["size"]
+    except (ZithubError, ValueError, KeyError):
+        return None
