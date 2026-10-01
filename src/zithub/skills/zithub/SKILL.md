@@ -30,6 +30,8 @@ zh my                  # your open PRs in this repo, or (outside a repo) all you
                         # open PRs across all repos, plus closed/merged ones from
                         # the last 30 days as per-repo counts (--days N to change
                         # that window, --closed to list them in full)
+zh stats [--owner ORG] [--days N] [--limit N]  # rank the most active repos by recent
+                        # PR + issue activity (all visible repos, or one owner/org)
 zh review              # PRs awaiting your review, updated in the last 7 days
 zh issues              # your open issues in this repo, or (outside a repo) your
                         # open issues with activity in the last 7 days, across all repos

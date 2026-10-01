@@ -581,4 +581,22 @@ def test_board_pr_details_skips_bot_comments_and_unescapes_title(fake_cli, monke
     assert pr.title == "Schema & marker logic"
     assert pr.last_comment_author == "reviewer1"
     assert pr.last_comment_at == "t1"
+
+
+def test_repo_activity_ranks_by_prs_plus_issues(fake_cli):
+    def cmd(kind):
+        return [
+            "gh", "search", kind, "--owner", "acme", "--updated", ">=2026-09-01",
+            "--limit", "1000", "--json", "repository",
+        ]  # fmt: skip
+
+    def repo(n):
+        return {"repository": {"nameWithOwner": n}}
+
+    fake_cli.set(cmd("prs"), stdout=json.dumps([repo("acme/a"), repo("acme/b"), repo("acme/b")]))
+    fake_cli.set(cmd("issues"), stdout=json.dumps([repo("acme/a"), repo("acme/a")]))
+    assert gh.repo_activity("acme", "2026-09-01") == [
+        gh.RepoActivity("acme/a", 1, 2),
+        gh.RepoActivity("acme/b", 2, 0),
+    ]
     assert pr.comment_count == 5

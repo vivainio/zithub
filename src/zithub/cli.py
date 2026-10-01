@@ -593,6 +593,23 @@ def cmd_my(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_stats(args: argparse.Namespace) -> int:
+    since = (date.today() - timedelta(days=args.days)).isoformat()
+    try:
+        activity = gh.repo_activity(args.owner, since)
+    except gh.ZithubError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if not activity:
+        print(f"no PR/issue activity since {since}", file=sys.stderr)
+        return 1
+    scope = args.owner or "all visible repos"
+    print(f"most active repos in {scope} since {since} (PRs + issues updated):")
+    for a in activity[: args.limit]:
+        print(f"  {a.repo}  {a.total}  ({a.prs} PRs, {a.issues} issues)")
+    return 0
+
+
 # CI can finish (or be re-run) without bumping the PR's updatedAt, so a
 # cached row in one of these states is refetched even when unchanged.
 _BOARD_UNSETTLED_CI_STATES = {"pending", "failed"}
@@ -1839,6 +1856,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--full", action="store_true", help="refetch every PR, not just new/changed ones"
     )
     p_board_sync.set_defaults(func=cmd_board_sync)
+    p_stats = sub.add_parser("stats", help="rank the most active repos by recent PR and issue activity")
+    p_stats.add_argument("--owner", help="limit to a user or org (default: all repos you can see)")
+    p_stats.add_argument("--days", type=int, default=30, help="lookback window in days (default: 30)")
+    p_stats.add_argument("--limit", type=int, default=10, help="repos to show (default: 10)")
+    p_stats.set_defaults(func=cmd_stats)
+
 
     p_board_query = board_sub.add_parser("query", help="run a read-only SQL query against the synced db")
     p_board_query.add_argument("sql", help='e.g. "select repo, number, title from prs where ci_state=\'failed\'"')

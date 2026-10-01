@@ -29,6 +29,7 @@ zh pr             # current branch's PR: status, checks, and review comment
                   # threads (unresolved by default; --all also shows resolved)
 zh my             # your open PRs across all repos, plus recent closed/merged
 zh my --this      # ...just for the current repo
+zh stats          # most active repos by recent PR+issue activity (--owner, --days, --limit)
 zh review         # PRs awaiting your review, updated in the last 7 days
 zh issues         # your open issues in this repo, or recent activity outside one
 zh gh <args...>   # gh <args...> as this repo owner's gh account (GH_TOKEN; no global switch)

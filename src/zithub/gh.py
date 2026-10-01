@@ -1611,5 +1611,41 @@ def failed_steps_summary(details_url: str | None) -> str | None:
     dur = _duration(job.get("startedAt"), job.get("completedAt"))
     if not all_steps:
         return job["name"]
+
+
+@dataclass(frozen=True)
+class RepoActivity:
+    repo: str
+    prs: int
+    issues: int
+
+    @property
+    def total(self) -> int:
+        return self.prs + self.issues
+
+
+def repo_activity(owner: str | None, since: str) -> list[RepoActivity]:
+    """PRs and issues touched since `since` (ISO date), counted per repo,
+    most active first. `owner` scopes to a user/org; None searches every repo
+    the token can see. Each search is capped (_SEARCH_ACTIVITY_LIMIT), so the
+    counts for very busy owners are lower bounds."""
+    counts: dict[str, list[int]] = {}
+    for idx, kind in enumerate(("prs", "issues")):
+        args = ["gh", "search", kind]
+        if owner:
+            args += ["--owner", owner]
+        args += [
+            "--updated", f">={since}",
+            "--limit", _SEARCH_ACTIVITY_LIMIT,
+            "--json", "repository",
+        ]  # fmt: skip
+        for item in _run_json(args):
+            name = item["repository"]["nameWithOwner"]
+            counts.setdefault(name, [0, 0])[idx] += 1
+    out = [RepoActivity(repo, c[0], c[1]) for repo, c in counts.items()]
+    return sorted(out, key=lambda a: (-a.total, a.repo))
+
+
+_SEARCH_ACTIVITY_LIMIT = "1000"
     progress = f"stopped after {completed}/{len(all_steps)} steps"
     return f"{job['name']} ({progress}, {dur})" if dur else f"{job['name']} ({progress})"
