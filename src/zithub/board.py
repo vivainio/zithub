@@ -58,6 +58,9 @@ CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS bots (
+    login TEXT PRIMARY KEY
+);
 """
 
 
@@ -155,6 +158,32 @@ def get_login(host: str) -> str | None:
     with _connect(host) as conn:
         row = conn.execute("SELECT value FROM meta WHERE key = 'login'").fetchone()
         return row["value"] if row else None
+
+
+def bot_logins(host: str) -> set[str]:
+    """Logins (lowercase) `zh board sync` treats as bots on this host, on
+    top of gh's built-in list — org machine users like a CI account."""
+    with _connect(host) as conn:
+        return {r["login"] for r in conn.execute("SELECT login FROM bots")}
+
+
+def add_bots(host: str, logins: list[str]) -> None:
+    with _connect(host) as conn:
+        conn.executemany("INSERT OR IGNORE INTO bots VALUES (?)", [(login.lower(),) for login in logins])
+        _mark_all_for_refetch(conn)
+
+
+def remove_bots(host: str, logins: list[str]) -> None:
+    with _connect(host) as conn:
+        conn.executemany("DELETE FROM bots WHERE login = ?", [(login.lower(),) for login in logins])
+        _mark_all_for_refetch(conn)
+
+
+def _mark_all_for_refetch(conn: sqlite3.Connection) -> None:
+    """Each row's last-comment fields were picked with the old bot list, so
+    blank the updated_at that cached_versions() hands to sync — every row
+    then looks changed and gets refetched, while still showing meanwhile."""
+    conn.execute("UPDATE prs SET updated_at = ''")
 
 
 @dataclass

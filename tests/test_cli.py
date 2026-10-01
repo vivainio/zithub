@@ -1238,3 +1238,17 @@ def test_gh_passthrough_looks_up_accounts_on_origins_host(fake_cli, passthrough_
     assert run(["gh", "pr", "list"]) == 0
     [(_args, env)] = passthrough_calls
     assert env["GH_TOKEN"] == "tok-ghe"
+
+
+def test_board_bots_add_list_rm(capsys, monkeypatch):
+    monkeypatch.setenv("GH_HOST", "github.com")
+    assert run(["board", "bots"]) == 0
+    assert "bots for github.com: (none)" in capsys.readouterr().out
+
+    assert run(["board", "bots", "add", "Github-CI_Acme", "other-ci"]) == 0
+    out = capsys.readouterr().out
+    assert "bots for github.com: github-ci_acme, other-ci" in out
+    assert "next `zh board sync` refetches every PR" in out
+
+    assert run(["board", "bots", "rm", "other-ci"]) == 0
+    assert "bots for github.com: github-ci_acme" in capsys.readouterr().out

@@ -552,8 +552,7 @@ def test_board_pr_details_does_not_retry_other_errors(fake_cli, monkeypatch):
         gh.board_pr_details("github.com", ["PR_1"])
 
 
-def test_board_pr_details_skips_bot_comments_and_unescapes_title(fake_cli, monkeypatch):
-    monkeypatch.setenv("ZH_BOT_LOGINS", "Github-CI_Acme, other-ci")
+def test_board_pr_details_skips_bot_comments_and_unescapes_title(fake_cli):
     args = ["gh", "api", "--hostname", "github.com", "graphql", "-f", f"query={gh._BOARD_PR_DETAILS_QUERY}", "-f", "ids[]=PR_1"]
     comments = [
         {"createdAt": "t1", "author": {"__typename": "User", "login": "reviewer1"}},
@@ -577,10 +576,11 @@ def test_board_pr_details_skips_bot_comments_and_unescapes_title(fake_cli, monke
     }
     fake_cli.set(args, stdout=json.dumps({"data": {"nodes": [node]}}))
 
-    [pr] = gh.board_pr_details("github.com", ["PR_1"])
+    [pr] = gh.board_pr_details("github.com", ["PR_1"], {"github-ci_acme"})
     assert pr.title == "Schema & marker logic"
     assert pr.last_comment_author == "reviewer1"
     assert pr.last_comment_at == "t1"
+    assert pr.comment_count == 5
 
 
 def test_repo_activity_ranks_by_prs_plus_issues(fake_cli):

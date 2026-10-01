@@ -644,6 +644,7 @@ def cmd_board_sync(args: argparse.Namespace) -> int:
     board.prune(host, {(r.repo, r.number) for r in refs})
 
     cached = board.cached_versions(host)
+    bots = board.bot_logins(host)
     todo = [
         r
         for r in refs
@@ -656,7 +657,7 @@ def cmd_board_sync(args: argparse.Namespace) -> int:
     for i in range(0, len(todo), gh.BOARD_DETAILS_BATCH_SIZE):
         batch = todo[i : i + gh.BOARD_DETAILS_BATCH_SIZE]
         try:
-            prs = gh.board_pr_details(host, [r.id for r in batch])
+            prs = gh.board_pr_details(host, [r.id for r in batch], bots)
         except gh.ZithubError as exc:
             print(f"error: {exc}", file=sys.stderr)
             print(
@@ -764,6 +765,19 @@ def cmd_board_focus(args: argparse.Namespace) -> int:
         print(_dim(f"waiting on others: {len(waiting)} PR(s), no action needed right now"))
     if not (fix_ci or needs_reply or ready_to_merge or waiting):
         print("nothing to focus on")
+    return 0
+
+
+def cmd_board_bots(args: argparse.Namespace) -> int:
+    host = gh.current_host()
+    if args.bots_command == "add":
+        board.add_bots(host, args.logins)
+    elif args.bots_command == "rm":
+        board.remove_bots(host, args.logins)
+    bots = sorted(board.bot_logins(host))
+    print(f"bots for {host}: {', '.join(bots) if bots else '(none)'}")
+    if args.bots_command:
+        print("next `zh board sync` refetches every PR to apply this")
     return 0
 
 
@@ -1852,6 +1866,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_my.set_defaults(func=cmd_my)
 
+    p_stats = sub.add_parser("stats", help="rank the most active repos by recent PR and issue activity")
+    p_stats.add_argument("--owner", help="limit to a user or org (default: all repos you can see)")
+    p_stats.add_argument("--days", type=int, default=30, help="lookback window in days (default: 30)")
+    p_stats.add_argument("--limit", type=int, default=10, help="repos to show (default: 10)")
+    p_stats.set_defaults(func=cmd_stats)
+
     p_board = sub.add_parser(
         "board", help="local sqlite view of your open PRs, synced from GitHub (`zh board sync` first)"
     )
@@ -1866,12 +1886,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--full", action="store_true", help="refetch every PR, not just new/changed ones"
     )
     p_board_sync.set_defaults(func=cmd_board_sync)
-    p_stats = sub.add_parser("stats", help="rank the most active repos by recent PR and issue activity")
-    p_stats.add_argument("--owner", help="limit to a user or org (default: all repos you can see)")
-    p_stats.add_argument("--days", type=int, default=30, help="lookback window in days (default: 30)")
-    p_stats.add_argument("--limit", type=int, default=10, help="repos to show (default: 10)")
-    p_stats.set_defaults(func=cmd_stats)
-
 
     p_board_query = board_sub.add_parser("query", help="run a read-only SQL query against the synced db")
     p_board_query.add_argument("sql", help='e.g. "select repo, number, title from prs where ci_state=\'failed\'"')
@@ -1881,6 +1895,15 @@ def build_parser() -> argparse.ArgumentParser:
         "focus", help="grouped view of the synced PRs: fix CI, needs your reply, ready to merge, waiting on others"
     )
     p_board_focus.set_defaults(func=cmd_board_focus, needs_gh=False)
+
+    p_board_bots = board_sub.add_parser(
+        "bots",
+        help="list the extra logins (e.g. a CI account) whose comments never count as needing your reply",
+    )
+    p_board_bots.set_defaults(func=cmd_board_bots, needs_gh=False, bots_command=None)
+    bots_sub = p_board_bots.add_subparsers(dest="bots_command")
+    for name, help_text in (("add", "treat these logins as bots"), ("rm", "stop treating these logins as bots")):
+        bots_sub.add_parser(name, help=help_text).add_argument("logins", nargs="+")
 
     p_review = sub.add_parser("review", help="list PRs awaiting your review, updated this week")
     p_review.set_defaults(func=cmd_review)

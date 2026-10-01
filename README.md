@@ -39,8 +39,8 @@ zh board sync             # fetch your open PRs + activity (CI, review, comments
                           # (incremental: only new/updated PRs or unsettled CI; --full refetches all)
 zh board                  # list synced PRs per repo (biggest first), oldest activity first (--stale-days N)
 zh board focus            # grouped: fix CI, needs your reply, ready to merge, waiting on others
-                          # (each grouped per repo; bot comments never count as "needs your reply":
-                          # add machine users like a CI account via ZH_BOT_LOGINS=a,b, then sync --full)
+                          # (each grouped per repo; bot comments never count as "needs your reply")
+zh board bots [add|rm X]  # extra logins treated as bots on this host, e.g. a CI service account
 zh board query "<SQL>"    # ad hoc read-only SQL against the synced db
                           # (one board per GitHub site: $GH_HOST, else origin's host, else github.com)
 

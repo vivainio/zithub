@@ -321,6 +321,8 @@ class BoardPr:
 # Scanners and CI reporters that comment on nearly every PR but never
 # want a reply. GitHub Apps are caught by their `Bot` type already; these
 # are the ones that show up as plain users (or as Apps on older GHES).
+# Org-specific machine users (a CI service account) are added per board
+# with `zh board bots add`.
 _KNOWN_BOT_LOGINS = {
     "snyk-io",
     "codescene",
@@ -334,29 +336,25 @@ _KNOWN_BOT_LOGINS = {
 }
 
 
-def _bot_logins() -> set[str]:
-    """_KNOWN_BOT_LOGINS plus any in ZH_BOT_LOGINS (comma-separated) — for
-    org-specific machine users like a CI service account."""
-    extra = os.environ.get("ZH_BOT_LOGINS", "")
-    return _KNOWN_BOT_LOGINS | {s.strip().lower() for s in extra.split(",") if s.strip()}
-
-
 def _is_bot_author(author: dict, bot_logins: set[str]) -> bool:
     login = (author.get("login") or "").lower()
     return author.get("__typename") == "Bot" or login.endswith("[bot]") or login in bot_logins
 
 
-def board_pr_details(host: str, ids: list[str]) -> list[BoardPr]:
+def board_pr_details(
+    host: str, ids: list[str], extra_bot_logins: set[str] | None = None
+) -> list[BoardPr]:
     """The per-PR detail `zh board` needs (review decision, aggregate CI
     state, last human comment) for the given PR node ids, in one GraphQL
     call — keep `ids` to about BOARD_DETAILS_BATCH_SIZE so the query stays
     cheap. Bot comments are skipped when picking the last comment, since
     "someone else commented last" is what `zh board focus` reads as
-    "needs your reply"."""
+    "needs your reply". `extra_bot_logins` (lowercase) are skipped too,
+    on top of _KNOWN_BOT_LOGINS."""
     args = ["gh", "api", "--hostname", host, "graphql", "-f", f"query={_BOARD_PR_DETAILS_QUERY}"]
     for pr_id in ids:
         args += ["-f", f"ids[]={pr_id}"]
-    bot_logins = _bot_logins()
+    bot_logins = _KNOWN_BOT_LOGINS | (extra_bot_logins or set())
     results: list[BoardPr] = []
     for node in _run_json_retrying(args)["data"]["nodes"]:
         if not node:
@@ -1611,6 +1609,8 @@ def failed_steps_summary(details_url: str | None) -> str | None:
     dur = _duration(job.get("startedAt"), job.get("completedAt"))
     if not all_steps:
         return job["name"]
+    progress = f"stopped after {completed}/{len(all_steps)} steps"
+    return f"{job['name']} ({progress}, {dur})" if dur else f"{job['name']} ({progress})"
 
 
 @dataclass(frozen=True)

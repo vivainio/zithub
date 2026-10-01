@@ -110,3 +110,18 @@ def test_rows_cached_under_an_older_cache_version_are_dropped():
     assert board.list_board(H) == []
     board.sync(H, [_pr(1)], synced_at="t2")
     assert [r.number for r in board.list_board(H)] == [1]
+
+
+def test_bots_are_stored_lowercase_and_force_a_refetch():
+    board.sync(H, [_pr(1)], synced_at="t1")
+    assert board.cached_versions(H)[("acme/widgets", 1)][0] == "2026-09-01T00:00:00Z"
+
+    board.add_bots(H, ["Github-CI_Acme", "other-ci"])
+    assert board.bot_logins(H) == {"github-ci_acme", "other-ci"}
+    # still listed, but no longer matches GitHub's updatedAt, so sync refetches it
+    assert [r.number for r in board.list_board(H)] == [1]
+    assert board.cached_versions(H)[("acme/widgets", 1)][0] == ""
+
+    board.remove_bots(H, ["GITHUB-CI_ACME"])
+    assert board.bot_logins(H) == {"other-ci"}
+    assert board.bot_logins("ghe.example.com") == set()
