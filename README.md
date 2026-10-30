@@ -23,7 +23,11 @@ authenticated (`gh auth login`).
 ```
 zh                # prints help (bare zh does nothing)
 zh status         # repo, branch, local, PR, and CI status in one shot
-                  # (also recent branches/worktrees on the default branch)
+                  # (also recent branches/worktrees on the default branch, with
+                  # already-merged branches marked; flags a uv.lock that leaked a
+                  # private index/mirror, when using a personal gh account)
+zh fixup uv-lock  # rewrite uv.lock's private mirror URLs back to public pypi.org
+                  # (a later `uv lock` re-adds them; rerun after that)
 zh ci             # just the CI status for the current branch/PR
 zh pr             # current branch's PR: status, checks, and review comment
                   # threads (unresolved by default; --all also shows resolved)

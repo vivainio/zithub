@@ -20,7 +20,10 @@ run in a repo — repo, branch, PR, and CI status in one shot, plus a final
 ```bash
 zh status             # repo, branch, PR, and CI status for the current directory (bare `zh` only prints help)
                        # (also lists recent local branches/worktrees when on the
-                       # default branch with no PR of its own)
+                       # default branch with no PR of its own; branches already merged
+                       # into the default branch are marked, with a delete hint)
+zh fixup uv-lock       # rewrite uv.lock's private index/mirror URLs back to public pypi.org
+                        # (zh status flags the leak; `uv lock` re-adds it, so rerun after)
 zh ci                  # just the CI status for the current branch/PR
 zh pr                  # current branch's PR: status, checks, and review comment
                         # threads (unresolved by default; --all also shows resolved) —
