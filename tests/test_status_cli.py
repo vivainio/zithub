@@ -419,3 +419,65 @@ def test_issues_outside_repo_shows_recent_activity(fake_cli, capsys):
     assert rc == 0
     assert f"your open issues with activity since {since}:" in out
     assert "other/repo  #12 Cross-repo issue" in out
+
+
+def test_status_hints_fixup_uv_lock_for_a_leaked_mirror(fake_cli, capsys, tmp_path):
+    (tmp_path / "uv.lock").write_text(
+        'source = { registry = "https://pypi-mirror.example.com/simple" }\n'
+    )
+    fake_cli.set(["git", "fetch"], stdout="")
+    fake_cli.set(["gh", "repo", "view", "--json", _REPO_FIELDS], stdout=repo_json())
+    fake_cli.set(["git", "rev-parse", "--abbrev-ref", "HEAD"], stdout="feature")
+    fake_cli.set(["git", "status", "--porcelain=v2", "--branch"], stdout="# branch.ab +0 -0")
+    fake_cli.set(["git", "rev-parse", "--git-dir", "--git-common-dir"], stdout="x\nx")
+    fake_cli.set(["gh", "pr", "view", "--json", _PR_FIELDS], stdout=pr_json())
+    fake_cli.set(["gh", "run", "list", "--limit", "20", "--json", gh._RUN_LIST_FIELDS], stdout="[]")
+    fake_cli.set(
+        ["gh", "auth", "status", "--json", "hosts"],
+        stdout=json.dumps({"hosts": {"github.com": [{"login": "vivainio", "active": True}]}}),
+    )
+
+    assert run(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "uv.lock references a private index/mirror: pypi-mirror.example.com" in out
+    assert "fix with `zh fixup uv-lock`" in out
+
+
+def test_status_ignores_leaked_mirror_for_corporate_account(fake_cli, capsys, tmp_path):
+    (tmp_path / "uv.lock").write_text(
+        'source = { registry = "https://pypi-mirror.example.com/simple" }\n'
+    )
+    fake_cli.set(["git", "fetch"], stdout="")
+    fake_cli.set(["gh", "repo", "view", "--json", _REPO_FIELDS], stdout=repo_json())
+    fake_cli.set(["git", "rev-parse", "--abbrev-ref", "HEAD"], stdout="feature")
+    fake_cli.set(["git", "status", "--porcelain=v2", "--branch"], stdout="# branch.ab +0 -0")
+    fake_cli.set(["git", "rev-parse", "--git-dir", "--git-common-dir"], stdout="x\nx")
+    fake_cli.set(["gh", "pr", "view", "--json", _PR_FIELDS], stdout=pr_json())
+    fake_cli.set(["gh", "run", "list", "--limit", "20", "--json", gh._RUN_LIST_FIELDS], stdout="[]")
+    fake_cli.set(
+        ["gh", "auth", "status", "--json", "hosts"],
+        stdout=json.dumps({"hosts": {"github.com": [{"login": "ville_Acme", "active": True}]}}),
+    )
+
+    assert run(["status"]) == 0
+    assert "private index/mirror" not in capsys.readouterr().out
+
+
+def test_fixup_uv_lock_rewrites_the_lockfile(capsys, tmp_path):
+    lock = tmp_path / "uv.lock"
+    lock.write_text(
+        'source = { registry = "https://pypi-mirror.example.com/simple" }\n'
+        'sdist = { url = "https://pypi-mirror.example.com/packages/foo.tar.gz" }\n'
+    )
+
+    assert run(["fixup", "uv-lock"]) == 0
+    out = capsys.readouterr().out
+    assert "rewrote uv.lock: pypi-mirror.example.com -> pypi.org / files.pythonhosted.org" in out
+    assert "pypi-mirror.example.com" not in lock.read_text()
+
+
+def test_fixup_uv_lock_noop_when_already_public(capsys, tmp_path):
+    (tmp_path / "uv.lock").write_text('source = { registry = "https://pypi.org/simple" }\n')
+
+    assert run(["fixup", "uv-lock"]) == 0
+    assert "already points at the public index" in capsys.readouterr().out

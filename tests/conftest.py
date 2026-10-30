@@ -59,6 +59,13 @@ def fake_cli(monkeypatch: pytest.MonkeyPatch) -> FakeCli:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_cwd(tmp_path, monkeypatch):
+    """uv_lock_private_mirrors() reads "uv.lock" relative to cwd -- run from an
+    empty dir so tests don't pick up this repo's real lockfile."""
+    monkeypatch.chdir(tmp_path)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_registry(tmp_path, monkeypatch):
     """zithub.registry reads/writes under XDG_DATA_HOME -- point every test
     at an empty temp dir so none of them see (or pollute) this machine's

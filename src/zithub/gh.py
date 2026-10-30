@@ -732,6 +732,9 @@ def current_host() -> str:
 
 
 _REMOTE_OWNER_RE = re.compile(r"[:/]([^/:@]+)/[^/]+/?$")
+_LOCK_URL_RE = re.compile(r'(?:url|registry)\s*=\s*"(https?://[^"]+)"')
+_PUBLIC_INDEX_HOSTS = {"pypi.org", "files.pythonhosted.org"}
+_LOCK_REGISTRY_RE = re.compile(r'registry = "(https://[^"]+)/simple"')
 
 
 def _origin_url() -> str | None:
@@ -1701,3 +1704,72 @@ def repo_size_kb(name_with_owner: str) -> int | None:
         return _run_json(["gh", "api", f"repos/{name_with_owner}", "--jq", "{size: .size}"])["size"]
     except (ZithubError, ValueError, KeyError):
         return None
+
+
+def uv_lock_private_mirrors(path: str = "uv.lock") -> list[str]:
+    """Hostnames in uv.lock's package/registry URLs that aren't public PyPI —
+    a sign the lock was resolved through a private/corporate mirror (e.g.
+    baked in via a global `~/.config/uv/uv.toml`) and would leak that
+    mirror's hostname if committed as-is. Empty (never raises) if the file
+    is missing or every URL is already public."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return []
+
+    hosts = set()
+    for url in _LOCK_URL_RE.findall(text):
+        host = urllib.parse.urlparse(url).hostname
+        if host and host not in _PUBLIC_INDEX_HOSTS:
+            hosts.add(host)
+    return sorted(hosts)
+
+
+def fix_uv_lock_mirror(path: str = "uv.lock") -> str | None:
+    """Rewrite uv.lock's registry/package URLs from a private index/mirror
+    back to public PyPI (pypi.org / files.pythonhosted.org). Returns the
+    mirror hostname that was replaced, or None if the file is missing or
+    already points at the public index — never raises.
+
+    This is a one-shot undo, not a lasting fix: a later `uv lock` / `uv
+    sync` / `uv add` re-resolves against whatever index is configured
+    (typically a corporate-default `~/.config/uv/uv.toml`) and will
+    silently reintroduce the mirror, so this needs rerunning after that.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return None
+
+    match = _LOCK_REGISTRY_RE.search(text)
+    if not match:
+        return None
+    prefix = match.group(1)
+    host = urllib.parse.urlparse(prefix).hostname
+    if not host or host in _PUBLIC_INDEX_HOSTS:
+        return None
+
+    text = text.replace(f"{prefix}/simple", "https://pypi.org/simple")
+    text = text.replace(f"{prefix}/packages/", "https://files.pythonhosted.org/packages/")
+    # some mirrors (e.g. Artifactory) double the packages/ segment in file URLs
+    text = text.replace(
+        "files.pythonhosted.org/packages/packages/", "files.pythonhosted.org/packages/"
+    )
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    return host
+
+
+def active_account_is_personal() -> bool | None:
+    """Whether the active gh account is a personal identity rather than a
+    corporate SSO one ("name_OrgName", see `_login_matches_owner`), so a login
+    with no "_" is the person's own public GitHub account. None if it can't
+    be determined (gh not installed/authed). Gates convenience checks aimed at
+    public personal repos, e.g. leaked private-mirror URLs in uv.lock."""
+    login = current_login()
+    if login is None:
+        return None
+    return "_" not in login
