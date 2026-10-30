@@ -275,9 +275,14 @@ def _print_recent_branches(current_branch: str) -> None:
     prs = gh.open_prs_by_branch()
 
     if branches:
+        merged = gh.merged_branch_names(f"origin/{current_branch}", branches)
         print("recent branches")
         for b in branches:
-            print(f"       {b.name}  ({b.relative_date}){_pr_suffix(prs, b.name)}")
+            note = f"  {_dim('merged')}" if b.name in merged and b.name not in prs else ""
+            print(f"       {b.name}  ({b.relative_date}){_pr_suffix(prs, b.name)}{note}")
+        stale = [b.name for b in branches if b.name in merged and b.name not in prs]
+        if stale:
+            print(f"       already merged — delete with `git branch -D {' '.join(stale)}`")
 
     worktree_entries = gh.worktree_info(
         exclude_branch=current_branch, default_ref=f"origin/{current_branch}"
@@ -1946,6 +1951,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_git.set_defaults(func=lambda a: cmd_git(a.args), needs_gh=False)
 
     return parser
+
+
+def wazup_argv(argv: list[str]) -> list[str]:
+    """Translate the legacy `wazup` command's args: bare `wazup` (or flags
+    only) meant `status`; `wazup <subcommand> ...` passes through unchanged."""
+    if not argv or (argv[0].startswith("-") and argv[0] not in ("-h", "--help")):
+        return ["status", *argv]
+    return argv
+
+
+def wazup_main() -> None:
+    sys.argv[1:] = wazup_argv(sys.argv[1:])
+    main()
 
 
 def main() -> None:

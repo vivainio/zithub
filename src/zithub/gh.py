@@ -1070,6 +1070,7 @@ def local_status() -> LocalStatus:
 class BranchInfo:
     name: str
     relative_date: str
+    sha: str = ""
 
 
 def local_branches_by_recency(exclude: set[str] | None = None) -> list[BranchInfo]:
@@ -1082,7 +1083,7 @@ def local_branches_by_recency(exclude: set[str] | None = None) -> list[BranchInf
                 "for-each-ref",
                 "refs/heads/",
                 "--sort=-committerdate",
-                "--format=%(refname:short)\t%(committerdate:relative)",
+                "--format=%(refname:short)\t%(committerdate:relative)\t%(objectname)",
             ]
         )
     except ZithubError:
@@ -1090,10 +1091,53 @@ def local_branches_by_recency(exclude: set[str] | None = None) -> list[BranchInf
 
     branches = []
     for line in data.splitlines():
-        name, _, relative_date = line.partition("\t")
+        name, _, rest = line.partition("\t")
+        relative_date, _, sha = rest.partition("\t")
         if name and name not in exclude:
-            branches.append(BranchInfo(name=name, relative_date=relative_date))
+            branches.append(BranchInfo(name=name, relative_date=relative_date, sha=sha))
     return branches
+
+
+def merged_branch_names(default_ref: str, branches: list[BranchInfo]) -> set[str]:
+    """Names of `branches` whose tip is already in the default branch: either
+    reachable from `default_ref`, or the head commit of a merged PR (which
+    catches squash/rebase merges that plain ancestry misses)."""
+    merged: set[str] = set()
+    try:
+        data = _run(
+            [
+                "git",
+                "for-each-ref",
+                "refs/heads/",
+                f"--merged={default_ref}",
+                "--format=%(refname:short)",
+            ]
+        )
+        merged.update(data.split())
+    except ZithubError:
+        pass
+    pending = {b.name: b.sha for b in branches if b.name not in merged and b.sha}
+    if pending:
+        try:
+            prs = _run_json(
+                [
+                    "gh",
+                    "pr",
+                    "list",
+                    "--state",
+                    "merged",
+                    "--json",
+                    "headRefName,headRefOid",
+                    "--limit",
+                    "100",
+                ]
+            )
+        except ZithubError:
+            prs = []
+        merged.update(
+            p["headRefName"] for p in prs if pending.get(p["headRefName"]) == p["headRefOid"]
+        )
+    return merged
 
 
 def is_orphaned_worktree_branch_name(name: str) -> bool:

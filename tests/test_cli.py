@@ -1252,3 +1252,19 @@ def test_board_bots_add_list_rm(capsys, monkeypatch):
 
     assert run(["board", "bots", "rm", "other-ci"]) == 0
     assert "bots for github.com: github-ci_acme" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "argv, expected",
+    [
+        ([], ["status"]),
+        (["--why"], ["status", "--why"]),
+        (["pr", "--all"], ["pr", "--all"]),
+        (["repos", "foo"], ["repos", "foo"]),
+        (["--help"], ["--help"]),
+    ],
+)
+def test_wazup_argv(argv, expected):
+    from zithub.cli import wazup_argv
+
+    assert wazup_argv(argv) == expected

@@ -31,6 +31,7 @@ Issues = "https://github.com/vivainio/zithub/issues"
 
 [project.scripts]
 zh = "zithub:main"
+wazup = "zithub:wazup_main"
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]
