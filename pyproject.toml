@@ -40,8 +40,17 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
+    "ruff>=0.17.0",
     "ty>=0.0.72",
 ]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "BLE", "FURB", "PLW", "RUF"]
+# E501: the formatter wraps code; long string literals are fine.
+ignore = ["E501", "B905", "PLW2901"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
