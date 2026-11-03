@@ -66,7 +66,10 @@ def _threads(*threads: tuple[str, bool]) -> str:
             "data": {
                 "repository": {
                     "pullRequest": {
-                        "reviewThreads": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}
+                        "reviewThreads": {
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            "nodes": nodes,
+                        }
                     }
                 }
             }
@@ -101,6 +104,7 @@ HEADER = f"@pr acme/widgets#7 head={SHA}\n"
 
 # ---------------------------------------------------------------------------
 # parse
+
 
 def test_parse_all_verbs():
     p = plan.parse(
@@ -151,7 +155,17 @@ def test_untouched_scaffold_parses_to_no_actions():
     thread = gh.ReviewThread(
         id="T_1",
         is_resolved=False,
-        comments=[gh.ReviewComment("C", "alice", "2026-01-01", "why?\nreally", "a.xsl", 42, "@@\n-old\n+new")],
+        comments=[
+            gh.ReviewComment(
+                "C",
+                "alice",
+                "2026-01-01",
+                "why?\nreally",
+                "a.xsl",
+                42,
+                "@@\n-old\n+new",
+            )
+        ],
     )
     text = plan.render("acme/widgets", pr, [thread])
     assert "## thread T_1  a.xsl:42  (unresolved)" in text
@@ -181,6 +195,7 @@ def test_uncommenting_scaffold_lines_yields_actions():
 
 # ---------------------------------------------------------------------------
 # zh plan (generate)
+
 
 def test_plan_generate_prints_scaffold(fake_cli, capsys):
     _stub_pr(fake_cli, _threads(("T_1", False), ("T_2", True)), ref=None)
@@ -213,6 +228,7 @@ def test_plan_generate_accepts_pr_url(fake_cli, capsys):
 
 # ---------------------------------------------------------------------------
 # zh plan --apply
+
 
 def _write(tmp_path, body: str) -> str:
     f = tmp_path / "plan.md"

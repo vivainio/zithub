@@ -93,9 +93,7 @@ class TestCheckSkillStaleness:
         bundled_root = tmp_path / "bundled"
         (bundled_root / "skills" / "zithub").mkdir(parents=True)
         bundled_front_matter = f"updated: {bundled_updated}\n" if bundled_updated else ""
-        (bundled_root / "skills" / "zithub" / "SKILL.md").write_text(
-            f"---\n{bundled_front_matter}---\n\nBundled body"
-        )
+        (bundled_root / "skills" / "zithub" / "SKILL.md").write_text(f"---\n{bundled_front_matter}---\n\nBundled body")
         monkeypatch.setattr(skills, "files", lambda package: bundled_root)
 
         installed_md = tmp_path / "installed" / "SKILL.md"
@@ -110,7 +108,12 @@ class TestCheckSkillStaleness:
         return marker
 
     def test_prints_nudge_when_installed_is_older(self, tmp_path, monkeypatch, capsys):
-        self._setup(tmp_path, monkeypatch, bundled_updated="2026-07-16", installed_updated="2026-07-03")
+        self._setup(
+            tmp_path,
+            monkeypatch,
+            bundled_updated="2026-07-16",
+            installed_updated="2026-07-03",
+        )
 
         skills.check_skill_staleness()
 
@@ -121,7 +124,12 @@ class TestCheckSkillStaleness:
         assert "zh install-skills" in err
 
     def test_silent_when_up_to_date(self, tmp_path, monkeypatch, capsys):
-        self._setup(tmp_path, monkeypatch, bundled_updated="2026-07-16", installed_updated="2026-07-16")
+        self._setup(
+            tmp_path,
+            monkeypatch,
+            bundled_updated="2026-07-16",
+            installed_updated="2026-07-16",
+        )
 
         skills.check_skill_staleness()
 
@@ -129,7 +137,10 @@ class TestCheckSkillStaleness:
 
     def test_silent_when_no_installed_skill(self, tmp_path, monkeypatch, capsys):
         self._setup(
-            tmp_path, monkeypatch, bundled_updated="2026-07-16", installed_updated=None,
+            tmp_path,
+            monkeypatch,
+            bundled_updated="2026-07-16",
+            installed_updated=None,
             installed_exists=False,
         )
 
@@ -138,7 +149,12 @@ class TestCheckSkillStaleness:
         assert capsys.readouterr().err == ""
 
     def test_throttled_to_once_per_day(self, tmp_path, monkeypatch, capsys):
-        self._setup(tmp_path, monkeypatch, bundled_updated="2026-07-16", installed_updated="2026-07-03")
+        self._setup(
+            tmp_path,
+            monkeypatch,
+            bundled_updated="2026-07-16",
+            installed_updated="2026-07-03",
+        )
 
         skills.check_skill_staleness()
         assert "outdated" in capsys.readouterr().err
@@ -148,7 +164,10 @@ class TestCheckSkillStaleness:
 
     def test_writes_marker_with_todays_date(self, tmp_path, monkeypatch):
         marker = self._setup(
-            tmp_path, monkeypatch, bundled_updated="2026-07-16", installed_updated="2026-07-16"
+            tmp_path,
+            monkeypatch,
+            bundled_updated="2026-07-16",
+            installed_updated="2026-07-16",
         )
 
         skills.check_skill_staleness()

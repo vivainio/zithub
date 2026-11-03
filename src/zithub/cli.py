@@ -47,7 +47,9 @@ def _bold(text: str) -> str:
 
 def _add_ref_arg(p: argparse.ArgumentParser) -> None:
     p.add_argument(
-        "ref", nargs="?", help="PR number, URL, or branch (default: current branch's PR)"
+        "ref",
+        nargs="?",
+        help="PR number, URL, or branch (default: current branch's PR)",
     )
 
 
@@ -68,6 +70,7 @@ def _add_why_flag(p: argparse.ArgumentParser) -> None:
 # status/ci — read-side reporting ported from wazup, so zh doesn't require it
 # installed alongside just to answer "what's up with this repo/PR/CI run?"
 
+
 def _check_icon(conclusion: str | None, status: str) -> str:
     s = (status or "").upper()
     c = (conclusion or "").upper()
@@ -75,7 +78,13 @@ def _check_icon(conclusion: str | None, status: str) -> str:
         return _yellow("~")
     if c == "SUCCESS" or s == "SUCCESS":
         return _green("✓")
-    if c in {"FAILURE", "TIMED_OUT", "CANCELLED", "STARTUP_FAILURE", "ACTION_REQUIRED"} or s in {
+    if c in {
+        "FAILURE",
+        "TIMED_OUT",
+        "CANCELLED",
+        "STARTUP_FAILURE",
+        "ACTION_REQUIRED",
+    } or s in {
         "FAILURE",
         "ERROR",
     }:
@@ -83,9 +92,7 @@ def _check_icon(conclusion: str | None, status: str) -> str:
     return _dim("?")
 
 
-def _fetch_failure_info(
-    checks: list[gh.CheckRun], why: bool
-) -> list[tuple[str | None, str | None]]:
+def _fetch_failure_info(checks: list[gh.CheckRun], why: bool) -> list[tuple[str | None, str | None]]:
     """(summary, log tail) per check, fetched concurrently — each is an
     independent `gh` call, so threads (I/O-bound, stdlib-only) turn N
     sequential round trips into ~1."""
@@ -157,8 +164,7 @@ def _staleness_note(head_sha: str | None) -> str | None:
     if not behind:
         return None
     return _dim(
-        f"stale — ran on {head_sha[:7]}, {behind} commit{'s' if behind != 1 else ''} "
-        "behind HEAD; may already be fixed"
+        f"stale — ran on {head_sha[:7]}, {behind} commit{'s' if behind != 1 else ''} behind HEAD; may already be fixed"
     )
 
 
@@ -224,9 +230,7 @@ def _print_ci_fallback(branch: str, why: bool, cmd: str) -> tuple[bool, bool]:
         if earlier_failures:
             note = f"fixed — {earlier_failures} of the last {len(checks)} runs had failed"
             print(f"         {_dim(note)}")
-        other_ok = _print_recent_other_runs(
-            exclude_names={latest.name}, exclude_urls={latest.details_url}
-        )
+        other_ok = _print_recent_other_runs(exclude_names={latest.name}, exclude_urls={latest.details_url})
         return True, gh.is_success(latest) and other_ok
 
     summary, tail = _fetch_failure_info([latest], why)[0]
@@ -284,9 +288,7 @@ def _print_recent_branches(current_branch: str) -> None:
         if stale:
             print(f"       already merged — delete with `git branch -D {' '.join(stale)}`")
 
-    worktree_entries = gh.worktree_info(
-        exclude_branch=current_branch, default_ref=f"origin/{current_branch}"
-    )
+    worktree_entries = gh.worktree_info(exclude_branch=current_branch, default_ref=f"origin/{current_branch}")
     if worktree_entries:
         print("worktrees")
         for w in worktree_entries:
@@ -313,9 +315,7 @@ def _print_local_status(status: gh.LocalStatus) -> None:
         push_note = _yellow(", ".join(notes)) if notes else _green("pushed")
 
     tree_note = _red("dirty") if status.changed_files else _green("clean")
-    untracked_note = (
-        _dim(f"  (+{status.untracked_count} untracked)") if status.untracked_count else ""
-    )
+    untracked_note = _dim(f"  (+{status.untracked_count} untracked)") if status.untracked_count else ""
     print(f"local  {push_note}, {tree_note}{untracked_note}")
 
     if len(status.changed_files) > _MAX_LISTED_CHANGED_FILES:
@@ -447,7 +447,8 @@ def cmd_status(args: argparse.Namespace) -> int:
 
     other_ok = _print_checks(pr.checks, cmd="zh", why=args.why)
     _print_all_clean_if(
-        local_clean=_is_local_clean(local), ci_ok=_all_checks_passed(pr.checks) and other_ok
+        local_clean=_is_local_clean(local),
+        ci_ok=_all_checks_passed(pr.checks) and other_ok,
     )
     return 0
 
@@ -460,9 +461,10 @@ def _print_review_threads(threads: list[gh.ReviewThread], show_resolved: bool) -
         return
 
     unresolved_count = sum(1 for t in shown if not t.is_resolved)
-    print(f"comments  {_yellow(f'{unresolved_count} unresolved')}" + (
-        f", {len(shown) - unresolved_count} resolved" if show_resolved else ""
-    ))
+    print(
+        f"comments  {_yellow(f'{unresolved_count} unresolved')}"
+        + (f", {len(shown) - unresolved_count} resolved" if show_resolved else "")
+    )
     for t in shown:
         status = _dim("(resolved)") if t.is_resolved else _red("(unresolved)")
         for c in t.comments:
@@ -551,7 +553,9 @@ def _print_pr_line(p: gh.PullRequestSummary, indent: str, show_state: bool = Fal
     print(f"{indent}    {_dim(p.url)}")
 
 
-def _group_by_repo(prs: list[gh.PullRequestSummary]) -> dict[str, list[gh.PullRequestSummary]]:
+def _group_by_repo(
+    prs: list[gh.PullRequestSummary],
+) -> dict[str, list[gh.PullRequestSummary]]:
     by_repo: dict[str, list[gh.PullRequestSummary]] = {}
     for p in prs:
         by_repo.setdefault(p.repo or "?", []).append(p)
@@ -721,10 +725,7 @@ def _print_board_row(r: board.BoardRow) -> None:
     review = r.review_decision.lower().replace("_", " ") or "no review"
     last_comment = f"  last comment: {r.last_comment_author}" if r.last_comment_author else ""
     print(f"    #{r.number}{draft}  {r.title}")
-    print(
-        f"        {idle_label}  ci: {r.ci_state}  review: {review}  "
-        f"comments: {r.comment_count}{last_comment}"
-    )
+    print(f"        {idle_label}  ci: {r.ci_state}  review: {review}  comments: {r.comment_count}{last_comment}")
     print(f"        {r.url}")
 
 
@@ -765,11 +766,7 @@ def cmd_board_focus(args: argparse.Namespace) -> int:
     login = board.get_login(host)
 
     fix_ci = [r for r in rows if r.ci_state == "failed"]
-    needs_reply = [
-        r
-        for r in rows
-        if r not in fix_ci and r.last_comment_author and r.last_comment_author != login
-    ]
+    needs_reply = [r for r in rows if r not in fix_ci and r.last_comment_author and r.last_comment_author != login]
     ready_to_merge = [
         r
         for r in rows
@@ -818,15 +815,13 @@ def cmd_board_query(args: argparse.Namespace) -> int:
     except board.BoardError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    except Exception as exc:  # sqlite3 errors (bad SQL, unknown column, etc.)
+    except Exception as exc:  # noqa: BLE001 - sqlite3 errors (bad SQL, unknown column, etc.)
         print(f"error: {exc}", file=sys.stderr)
         return 1
     if not rows:
         print("no rows")
         return 0
-    widths = [
-        max(len(str(col)), *(len(str(row[i])) for row in rows)) for i, col in enumerate(columns)
-    ]
+    widths = [max(len(str(col)), *(len(str(row[i])) for row in rows)) for i, col in enumerate(columns)]
     print("  ".join(col.ljust(w) for col, w in zip(columns, widths)))
     for row in rows:
         print("  ".join(str(v).ljust(w) for v, w in zip(row, widths)))
@@ -862,6 +857,7 @@ def cmd_issues(args: argparse.Namespace) -> int:
 
 # ---------------------------------------------------------------------------
 # review threads — gh has no subcommand for these at all
+
 
 def _print_thread(t: gh.ReviewThread) -> None:
     status = _dim("(resolved)") if t.is_resolved else _red("(unresolved)")
@@ -950,11 +946,13 @@ def cmd_unresolve(args: argparse.Namespace) -> int:
 # whether it references a ticket, both otherwise only visible by opening
 # the PR on the web
 
+
 def _local_checkout_for(repo_name: str | None, branch: str) -> registry.RepoEntry | None:
     if not repo_name:
         return None
     return next(
-        (e for e in registry.list_seen() if e.repo == repo_name and e.branch == branch), None
+        (e for e in registry.list_seen() if e.repo == repo_name and e.branch == branch),
+        None,
     )
 
 
@@ -982,8 +980,7 @@ def _check_one(ref: str | None) -> bool:
         if dirty:
             print(
                 _yellow(
-                    f"       dirty — {len(dirty)} uncommitted change(s); "
-                    "be careful switching branches or pulling there"
+                    f"       dirty — {len(dirty)} uncommitted change(s); be careful switching branches or pulling there"
                 )
             )
 
@@ -1024,11 +1021,14 @@ _MERGE_POLL_INTERVAL_SECONDS = 15
 
 def _wait_for_checks(ref: str | None, timeout: int) -> gh.PullRequest:
     """Poll the PR until no check is still pending, or `timeout` elapses."""
-    deadline = time.monotonic() + timeout
+    started = time.monotonic()
+    deadline = started + timeout
     pr = gh.resolve_pr(ref)
     while any(gh.is_pending(c) for c in pr.checks) and time.monotonic() < deadline:
         pending = [c.name for c in pr.checks if gh.is_pending(c)]
-        print(_dim(f"       waiting on CI: {', '.join(pending)}"))
+        elapsed = _fmt_duration(time.monotonic() - started)
+        label = f"merge preflight, waiting on CI ({elapsed}/{_fmt_duration(timeout)})"
+        print(_dim(f"       {label}: {', '.join(pending)}"))
         time.sleep(_MERGE_POLL_INTERVAL_SECONDS)
         pr = gh.resolve_pr(ref)
     return pr
@@ -1049,7 +1049,10 @@ def cmd_merge(args: argparse.Namespace) -> int:
             print("error: PR is a draft — mark ready or pass --force", file=sys.stderr)
             return 1
         if pr.review_decision == "CHANGES_REQUESTED":
-            print("error: changes requested — address review or pass --force", file=sys.stderr)
+            print(
+                "error: changes requested — address review or pass --force",
+                file=sys.stderr,
+            )
             return 1
 
         try:
@@ -1060,8 +1063,7 @@ def cmd_merge(args: argparse.Namespace) -> int:
         unresolved = [t for t in threads if not t.is_resolved]
         if unresolved:
             print(
-                f"error: {len(unresolved)} unresolved review thread(s) — "
-                "resolve them, or pass --force",
+                f"error: {len(unresolved)} unresolved review thread(s) — resolve them, or pass --force",
                 file=sys.stderr,
             )
             return 1
@@ -1076,7 +1078,10 @@ def cmd_merge(args: argparse.Namespace) -> int:
             return 1
         if pending:
             names = ", ".join(c.name for c in pending)
-            print(f"error: still pending: {names} (rerun with --wait, or pass --force)", file=sys.stderr)
+            print(
+                f"error: still pending: {names} (rerun with --wait, or pass --force)",
+                file=sys.stderr,
+            )
             return 1
 
     cmd = ["gh", "pr", "merge", *_gh_ref_args(args), f"--{args.method}"]
@@ -1148,7 +1153,10 @@ _PR_REF_RE = re.compile(r"^(\d+|https?://\S+/pull/\d+\S*)$")
 
 def _plan_generate(args: argparse.Namespace) -> int:
     if args.ref and not _PR_REF_RE.match(args.ref):
-        print(f"error: expected a PR number or URL, got {args.ref!r} (branch names aren't supported)", file=sys.stderr)
+        print(
+            f"error: expected a PR number or URL, got {args.ref!r} (branch names aren't supported)",
+            file=sys.stderr,
+        )
         return 1
     try:
         repo = gh.repo_info()
@@ -1163,7 +1171,10 @@ def _plan_generate(args: argparse.Namespace) -> int:
         sys.stdout.write(text)
         return 0
     if os.path.exists(args.output) and not args.force:
-        print(f"error: {args.output} exists (it may hold edits) — pass --force to overwrite", file=sys.stderr)
+        print(
+            f"error: {args.output} exists (it may hold edits) — pass --force to overwrite",
+            file=sys.stderr,
+        )
         return 1
     with open(args.output, "w", encoding="utf-8") as f:
         f.write(text)
@@ -1171,18 +1182,14 @@ def _plan_generate(args: argparse.Namespace) -> int:
     return 0
 
 
-def _plan_problems(
-    p: plan.Plan, repo: gh.RepoInfo, pr: gh.PullRequest, threads: list[gh.ReviewThread]
-) -> list[str]:
+def _plan_problems(p: plan.Plan, repo: gh.RepoInfo, pr: gh.PullRequest, threads: list[gh.ReviewThread]) -> list[str]:
     """Everything that would make applying `p` fail or act on something the
     plan's author never saw — checked before any action runs."""
     problems: list[str] = []
     if p.repo != repo.name_with_owner:
         problems.append(f"plan is for {p.repo}, but this directory is {repo.name_with_owner}")
     if pr.head_sha != p.head:
-        problems.append(
-            f"stale plan: PR head moved {p.head[:7]} -> {pr.head_sha[:7]} — regenerate with `zh plan`"
-        )
+        problems.append(f"stale plan: PR head moved {p.head[:7]} -> {pr.head_sha[:7]} — regenerate with `zh plan`")
     if pr.state != "OPEN":
         problems.append(f"PR #{pr.number} is {pr.state.lower()}, not open")
 
@@ -1313,6 +1320,13 @@ _CI_QUICK_ATTEMPTS = 5
 _CI_QUICK_INTERVAL_SECONDS = 1
 _CI_POLL_INTERVAL_SECONDS = 20
 _CI_MAX_ATTEMPTS = 30
+_CI_MAX_WAIT_SECONDS = _CI_MAX_ATTEMPTS * _CI_POLL_INTERVAL_SECONDS
+
+
+def _fmt_duration(seconds: float) -> str:
+    seconds = int(seconds)
+    minutes, secs = divmod(seconds, 60)
+    return f"{minutes}m{secs:02d}s" if minutes else f"{secs}s"
 
 
 def _print_run_failures(runs: list[gh.WorkflowRun]) -> None:
@@ -1331,6 +1345,9 @@ def _wait_for_release_ci(sha: str, branch: str) -> bool:
     skill's preflight polling: a short grace period for the run to appear,
     then a longer poll while anything is still in progress."""
     runs: list[gh.WorkflowRun] = []
+    started = time.monotonic()
+    announced = False
+    print(f"ci     looking for CI runs on {sha[:12]}...")
     for attempt in range(_CI_MAX_ATTEMPTS):
         runs = gh.runs_for_commit(sha)
         if not runs:
@@ -1341,8 +1358,17 @@ def _wait_for_release_ci(sha: str, branch: str) -> bool:
         pending = [r for r in runs if r.status != "completed"]
         if not pending:
             break
+        if not announced:
+            print(
+                f"ci     blocking until checks finish (up to "
+                f"{_fmt_duration(_CI_MAX_WAIT_SECONDS)}, polling every "
+                f"{_CI_POLL_INTERVAL_SECONDS}s) — this is the release preflight, not a hang"
+            )
+            announced = True
         names = ", ".join(f"{r.name}={r.status}" for r in runs)
-        print(_dim(f"       waiting on CI: {names}"))
+        elapsed = _fmt_duration(time.monotonic() - started)
+        label = f"waiting on CI ({elapsed}/{_fmt_duration(_CI_MAX_WAIT_SECONDS)})"
+        print(_dim(f"       {label}: {names}"))
         time.sleep(_CI_POLL_INTERVAL_SECONDS)
 
     if not runs:
@@ -1358,7 +1384,11 @@ def _wait_for_release_ci(sha: str, branch: str) -> bool:
     pending = [r for r in runs if r.status != "completed"]
     if pending:
         names = ", ".join(f"{r.name}={r.status}" for r in pending)
-        print(f"error: CI did not complete on {sha[:12]}: {names}", file=sys.stderr)
+        print(
+            f"error: timed out after {_fmt_duration(_CI_MAX_WAIT_SECONDS)} waiting for CI "
+            f"on {sha[:12]}: {names} (not a failure — rerun once checks finish)",
+            file=sys.stderr,
+        )
         return False
 
     failed = [r for r in runs if r.conclusion != "success"]
@@ -1372,10 +1402,13 @@ def _wait_for_release_ci(sha: str, branch: str) -> bool:
     return True
 
 
-def _release_preflight(target_arg: str | None) -> tuple[str, str, list[gh.ReleaseInfo]] | None:
+def _release_preflight(
+    target_arg: str | None,
+) -> tuple[str, str, list[gh.ReleaseInfo]] | None:
     """Runs every preflight check, printing progress as it goes. Returns
     (target_branch, head_sha, recent_releases) on pass, None on failure (the
     specific check that failed has already printed its own error)."""
+    print(_dim("release preflight: auth, branch, clean tree, sync with origin, CI"))
     try:
         branch = gh.current_branch()
     except gh.ZithubError as exc:
@@ -1398,8 +1431,7 @@ def _release_preflight(target_arg: str | None) -> tuple[str, str, list[gh.Releas
     if branch != target:
         override = "" if target_arg else f" or rerun with `--target {branch}`"
         print(
-            f"error: current branch is '{branch}', but release target is "
-            f"'{target}'; check out '{target}'{override}",
+            f"error: current branch is '{branch}', but release target is '{target}'; check out '{target}'{override}",
             file=sys.stderr,
         )
         return None
@@ -1426,6 +1458,7 @@ def _release_preflight(target_arg: str | None) -> tuple[str, str, list[gh.Releas
     else:
         print(f"local  {_green('clean')}")
 
+    print(_dim("sync   fetching origin..."))
     try:
         gh.fetch_all()
         sha = gh.current_commit_sha()
@@ -1452,8 +1485,7 @@ def _release_preflight(target_arg: str | None) -> tuple[str, str, list[gh.Releas
             else:
                 fix = "reconcile the diverged history"
         print(
-            f"error: local HEAD ({sha[:12]}) != origin/{target} ({remote_sha[:12]}) — "
-            f"{fix}, then retry",
+            f"error: local HEAD ({sha[:12]}) != origin/{target} ({remote_sha[:12]}) — {fix}, then retry",
             file=sys.stderr,
         )
         return None
@@ -1495,7 +1527,7 @@ def cmd_release(args: argparse.Namespace) -> int:
     result = _release_preflight(args.target)
     if result is None:
         return 1
-    target, _sha, releases = result
+    _target, _sha, releases = result
     print(_green("PREFLIGHT PASS"))
 
     previous_tag = releases[0].tag_name if releases else None
@@ -1512,10 +1544,7 @@ def cmd_release(args: argparse.Namespace) -> int:
         try:
             candidate = versioning.bump(previous_tag, part)
         except versioning.VersionError:
-            print(
-                f"       can't auto-bump '{previous_tag}' (not a plain vX.Y.Z tag) — "
-                "pick the next version yourself"
-            )
+            print(f"       can't auto-bump '{previous_tag}' (not a plain vX.Y.Z tag) — pick the next version yourself")
             break
         print(f"       {_gh_release_create_hint(candidate, args.target)}   ({part})")
     return 0
@@ -1557,7 +1586,10 @@ def _wait_for_release_workflows(since: str) -> bool:
         time.sleep(_PUBLISH_POLL_INTERVAL_SECONDS)
     else:
         names = ", ".join(f"{r.name}={r.status}" for r in seen.values() if r.status != "completed")
-        print(f"error: release workflow(s) did not complete in time: {names}", file=sys.stderr)
+        print(
+            f"error: release workflow(s) did not complete in time: {names}",
+            file=sys.stderr,
+        )
         return False
 
     failed = [r for r in seen.values() if r.conclusion != "success"]
@@ -1612,13 +1644,12 @@ def cmd_release_bump(args: argparse.Namespace) -> int:
     create` command to run. Never creates the release itself — bumping the
     version and choosing to release it are kept as two explicit steps, so
     nothing gets published just because a version number was requested."""
-    target = args.target
     releases: list[gh.ReleaseInfo] = []
     if not args.force:
         result = _release_preflight(args.target)
         if result is None:
             return 1
-        target, _sha, releases = result
+        _target, _sha, releases = result
     else:
         try:
             releases = gh.recent_releases(limit=1)
@@ -1650,12 +1681,12 @@ def cmd_release_bump(args: argparse.Namespace) -> int:
 def _add_release_create_args(p: argparse.ArgumentParser) -> None:
     notes_group = p.add_mutually_exclusive_group(required=True)
     notes_group.add_argument("-n", "--notes", help="release notes")
-    notes_group.add_argument(
-        "-F", "--notes-file", dest="notes_file", help="read release notes from file"
-    )
+    notes_group.add_argument("-F", "--notes-file", dest="notes_file", help="read release notes from file")
     p.add_argument("-t", "--title", help="release title (default: the tag)")
     p.add_argument(
-        "--target", metavar="BRANCH", help="release branch (default: repo's default branch)"
+        "--target",
+        metavar="BRANCH",
+        help="release branch (default: repo's default branch)",
     )
     p.add_argument("-d", "--draft", action="store_true")
     p.add_argument("-p", "--prerelease", action="store_true")
@@ -1670,6 +1701,7 @@ def _add_release_create_args(p: argparse.ArgumentParser) -> None:
 # repos — local-checkout registry, ported from wazup: recorded as a side
 # effect of ordinary zh usage, queried so an agent can find a checkout by
 # name instead of guessing paths or re-cloning
+
 
 def _display_path(path: str) -> str:
     home = os.path.expanduser("~")
@@ -1736,7 +1768,10 @@ def _owner_token_env() -> dict[str, str] | None:
         return None
     account, token = found
     if not account.active:
-        print(_dim(f"using gh account {account.login} (owner of this repo)"), file=sys.stderr)
+        print(
+            _dim(f"using gh account {account.login} (owner of this repo)"),
+            file=sys.stderr,
+        )
     return {**os.environ, "GH_TOKEN": token}
 
 
@@ -1746,7 +1781,12 @@ def cmd_gh(gh_args: list[str]) -> int:
 
 # Makes git authenticate through gh's credential helper — which honors
 # GH_TOKEN — even if the user's git config names some other helper.
-_GH_CREDENTIAL_HELPER = ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"]
+_GH_CREDENTIAL_HELPER = [
+    "-c",
+    "credential.helper=",
+    "-c",
+    "credential.helper=!gh auth git-credential",
+]
 
 
 def cmd_git(git_args: list[str]) -> int:
@@ -1768,7 +1808,8 @@ _PASSTHROUGH_COMMANDS = {"gh": cmd_gh, "git": cmd_git}
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="zh", description="what's up with this repo, plus the gh PR/release actions"
+        prog="zh",
+        description="what's up with this repo, plus the gh PR/release actions",
     )
     parser.set_defaults(needs_gh=True)
     sub = parser.add_subparsers(dest="command")
@@ -1782,16 +1823,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_why_flag(p_ci)
 
     pr = sub.add_parser("pr", help="PR status, or actions gh doesn't already do in one call")
-    pr.add_argument(
-        "--all", action="store_true", help="also show resolved review comment threads"
-    )
+    pr.add_argument("--all", action="store_true", help="also show resolved review comment threads")
     _add_why_flag(pr)
     pr.set_defaults(func=cmd_pr_status)
     pr_sub = pr.add_subparsers(dest="pr_command", required=False)
 
-    p_threads = pr_sub.add_parser(
-        "threads", help="list review-comment threads (with the ids reply/resolve need)"
-    )
+    p_threads = pr_sub.add_parser("threads", help="list review-comment threads (with the ids reply/resolve need)")
     _add_ref_arg(p_threads)
     p_threads.add_argument("--all", action="store_true", help="also show resolved threads")
     p_threads.add_argument("--path", help="only threads on a path containing this substring")
@@ -1808,7 +1845,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_resolve.add_argument("--all", action="store_true", help="resolve every unresolved thread")
     p_resolve.add_argument("--path", help="with --all, only threads on a matching path")
     p_resolve.add_argument(
-        "--pr", dest="ref", help="PR number, URL, or branch to use with --all (default: current branch's PR)"
+        "--pr",
+        dest="ref",
+        help="PR number, URL, or branch to use with --all (default: current branch's PR)",
     )
     p_resolve.set_defaults(func=cmd_resolve)
 
@@ -1843,16 +1882,20 @@ def build_parser() -> argparse.ArgumentParser:
         "plan",
         help="draft PR actions into one reviewable file (`zh plan > plan.md`), then `--apply` it",
     )
-    p_plan.add_argument(
-        "ref", nargs="?", help="PR number or URL (default: current branch's PR)"
-    )
+    p_plan.add_argument("ref", nargs="?", help="PR number or URL (default: current branch's PR)")
     p_plan.add_argument("--all", action="store_true", help="also list resolved threads in the scaffold")
     p_plan.add_argument("-o", "--output", help="write the scaffold to this file instead of stdout")
     p_plan.add_argument("--force", action="store_true", help="with -o, overwrite an existing file")
     p_plan.add_argument(
-        "--apply", metavar="FILE", help="validate and run a plan file ('-' for stdin) instead of generating one"
+        "--apply",
+        metavar="FILE",
+        help="validate and run a plan file ('-' for stdin) instead of generating one",
     )
-    p_plan.add_argument("--dry-run", action="store_true", help="with --apply, show the steps without running them")
+    p_plan.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="with --apply, show the steps without running them",
+    )
     p_plan.set_defaults(func=cmd_plan)
 
     release = sub.add_parser(
@@ -1860,13 +1903,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="preflight + what to release next (bare, or patch/minor/major); create to cut one",
     )
     release.add_argument(
-        "--target", metavar="BRANCH", help="release branch (default: repo's default branch)"
+        "--target",
+        metavar="BRANCH",
+        help="release branch (default: repo's default branch)",
     )
     release.set_defaults(func=cmd_release)
     release_sub = release.add_subparsers(dest="release_command")
 
     p_release_create = release_sub.add_parser(
-        "create", help="create the release at an explicit version (add --preflight to check first)"
+        "create",
+        help="create the release at an explicit version (add --preflight to check first)",
     )
     p_release_create.add_argument("tag", help="release tag/version, e.g. v1.3.0")
     _add_release_create_args(p_release_create)
@@ -1878,22 +1924,29 @@ def build_parser() -> argparse.ArgumentParser:
             help=f"preflight, then show the {part}-bumped version and the gh command to create it",
         )
         p_bump.add_argument(
-            "--target", metavar="BRANCH", help="release branch (default: repo's default branch)"
+            "--target",
+            metavar="BRANCH",
+            help="release branch (default: repo's default branch)",
         )
-        p_bump.add_argument(
-            "--force", action="store_true", help="skip the preflight"
-        )
+        p_bump.add_argument("--force", action="store_true", help="skip the preflight")
         p_bump.set_defaults(func=cmd_release_bump, part=part)
 
     p_my = sub.add_parser("my", help="list your open PRs across all repos, plus recent closed/merged")
     p_my.add_argument(
-        "--days", type=int, default=30, help="lookback window in days for closed/merged PRs (default: 30)"
+        "--days",
+        type=int,
+        default=30,
+        help="lookback window in days for closed/merged PRs (default: 30)",
     )
     p_my.add_argument(
-        "--closed", action="store_true", help="show closed/merged PRs in full, not just counts"
+        "--closed",
+        action="store_true",
+        help="show closed/merged PRs in full, not just counts",
     )
     p_my.add_argument(
-        "--this", action="store_true", help="scope to the current repo instead of all repos"
+        "--this",
+        action="store_true",
+        help="scope to the current repo instead of all repos",
     )
     p_my.set_defaults(func=cmd_my)
 
@@ -1904,26 +1957,37 @@ def build_parser() -> argparse.ArgumentParser:
     p_stats.set_defaults(func=cmd_stats)
 
     p_board = sub.add_parser(
-        "board", help="local sqlite view of your open PRs, synced from GitHub (`zh board sync` first)"
+        "board",
+        help="local sqlite view of your open PRs, synced from GitHub (`zh board sync` first)",
     )
     p_board.add_argument(
-        "--stale-days", type=int, default=None, metavar="N", help="only show PRs idle for at least N days"
+        "--stale-days",
+        type=int,
+        default=None,
+        metavar="N",
+        help="only show PRs idle for at least N days",
     )
     p_board.set_defaults(func=cmd_board, needs_gh=False)
     board_sub = p_board.add_subparsers(dest="board_command")
 
     p_board_sync = board_sub.add_parser("sync", help="fetch your open PRs and their activity into the local db")
     p_board_sync.add_argument(
-        "--full", action="store_true", help="refetch every PR, not just new/changed ones"
+        "--full",
+        action="store_true",
+        help="refetch every PR, not just new/changed ones",
     )
     p_board_sync.set_defaults(func=cmd_board_sync)
 
     p_board_query = board_sub.add_parser("query", help="run a read-only SQL query against the synced db")
-    p_board_query.add_argument("sql", help='e.g. "select repo, number, title from prs where ci_state=\'failed\'"')
+    p_board_query.add_argument(
+        "sql",
+        help="e.g. \"select repo, number, title from prs where ci_state='failed'\"",
+    )
     p_board_query.set_defaults(func=cmd_board_query, needs_gh=False)
 
     p_board_focus = board_sub.add_parser(
-        "focus", help="grouped view of the synced PRs: fix CI, needs your reply, ready to merge, waiting on others"
+        "focus",
+        help="grouped view of the synced PRs: fix CI, needs your reply, ready to merge, waiting on others",
     )
     p_board_focus.set_defaults(func=cmd_board_focus, needs_gh=False)
 
@@ -1933,14 +1997,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_board_bots.set_defaults(func=cmd_board_bots, needs_gh=False, bots_command=None)
     bots_sub = p_board_bots.add_subparsers(dest="bots_command")
-    for name, help_text in (("add", "treat these logins as bots"), ("rm", "stop treating these logins as bots")):
+    for name, help_text in (
+        ("add", "treat these logins as bots"),
+        ("rm", "stop treating these logins as bots"),
+    ):
         bots_sub.add_parser(name, help=help_text).add_argument("logins", nargs="+")
 
     p_review = sub.add_parser("review", help="list PRs awaiting your review, updated this week")
     p_review.set_defaults(func=cmd_review)
 
     p_issues = sub.add_parser(
-        "issues", help="list your open issues in this repo, or recent issue activity outside a repo"
+        "issues",
+        help="list your open issues in this repo, or recent issue activity outside a repo",
     )
     p_issues.set_defaults(func=cmd_issues)
 
@@ -1949,7 +2017,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="list local checkouts zh has seen, so agents can find one without guessing paths",
     )
     p_repos.add_argument(
-        "query", nargs="?", help="only show checkouts whose repo name or path contains this"
+        "query",
+        nargs="?",
+        help="only show checkouts whose repo name or path contains this",
     )
     p_repos.set_defaults(func=cmd_repos, needs_gh=False)
 
@@ -1967,18 +2037,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_fixup = sub.add_parser("fixup", help="fix issues zh's checks flagged")
     fixup_sub = p_fixup.add_subparsers(dest="fixup_target", required=True)
     p_fixup_uv_lock = fixup_sub.add_parser(
-        "uv-lock", help="rewrite uv.lock's private index/mirror URLs back to public pypi.org"
+        "uv-lock",
+        help="rewrite uv.lock's private index/mirror URLs back to public pypi.org",
     )
     p_fixup_uv_lock.set_defaults(func=cmd_fixup_uv_lock, needs_gh=False)
 
     p_gh = sub.add_parser(
-        "gh", add_help=False, help="run gh with GH_TOKEN set to this repo owner's account (no global switch)"
+        "gh",
+        add_help=False,
+        help="run gh with GH_TOKEN set to this repo owner's account (no global switch)",
     )
     p_gh.add_argument("args", nargs=argparse.REMAINDER)
     p_gh.set_defaults(func=lambda a: cmd_gh(a.args), needs_gh=False)
 
     p_git = sub.add_parser(
-        "git", add_help=False, help="run git; over https, as this repo owner's gh account (no global switch)"
+        "git",
+        add_help=False,
+        help="run git; over https, as this repo owner's gh account (no global switch)",
     )
     p_git.add_argument("args", nargs=argparse.REMAINDER)
     p_git.set_defaults(func=lambda a: cmd_git(a.args), needs_gh=False)

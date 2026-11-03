@@ -30,7 +30,12 @@ def pr_json(**overrides) -> str:
         "headRefName": "feature",
         "baseRefName": "main",
         "statusCheckRollup": [
-            {"name": "build", "status": "COMPLETED", "conclusion": "SUCCESS", "detailsUrl": "u1"}
+            {
+                "name": "build",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+                "detailsUrl": "u1",
+            }
         ],
     }
     data.update(overrides)
@@ -69,8 +74,18 @@ def empty_threads_json() -> str:
 # ---------------------------------------------------------------------------
 # review threads
 
+
 def test_threads_lists_unresolved_by_default(fake_cli, capsys):
-    fake_cli.set(["gh", "repo", "view", "--json", "owner,name,nameWithOwner,url,defaultBranchRef"], stdout=repo_json())
+    fake_cli.set(
+        [
+            "gh",
+            "repo",
+            "view",
+            "--json",
+            "owner,name,nameWithOwner,url,defaultBranchRef",
+        ],
+        stdout=repo_json(),
+    )
     fake_cli.set(["gh", "pr", "view", "--json", _PR_FIELDS], stdout=pr_json())
     fake_cli.set(
         [
@@ -110,7 +125,11 @@ def test_threads_lists_unresolved_by_default(fake_cli, capsys):
                                             ]
                                         },
                                     },
-                                    {"id": "T_2", "isResolved": True, "comments": {"nodes": []}},
+                                    {
+                                        "id": "T_2",
+                                        "isResolved": True,
+                                        "comments": {"nodes": []},
+                                    },
                                 ],
                             }
                         }
@@ -139,9 +158,7 @@ def test_reply_and_resolve(fake_cli, capsys):
             "-f",
             "body=done",
         ],
-        stdout=json.dumps(
-            {"data": {"addPullRequestReviewThreadReply": {"comment": {"url": "https://x/comment"}}}}
-        ),
+        stdout=json.dumps({"data": {"addPullRequestReviewThreadReply": {"comment": {"url": "https://x/comment"}}}}),
     )
     fake_cli.set(
         [
@@ -190,7 +207,16 @@ def test_resolve_explicit_ids_skips_repo_lookup(fake_cli):
 
 
 def test_resolve_all_no_threads(fake_cli, capsys):
-    fake_cli.set(["gh", "repo", "view", "--json", "owner,name,nameWithOwner,url,defaultBranchRef"], stdout=repo_json())
+    fake_cli.set(
+        [
+            "gh",
+            "repo",
+            "view",
+            "--json",
+            "owner,name,nameWithOwner,url,defaultBranchRef",
+        ],
+        stdout=repo_json(),
+    )
     fake_cli.set(["gh", "pr", "view", "--json", _PR_FIELDS], stdout=pr_json())
     fake_cli.set(
         [
@@ -216,6 +242,7 @@ def test_resolve_all_no_threads(fake_cli, capsys):
 # ---------------------------------------------------------------------------
 # merge preflight
 
+
 def test_merge_blocks_draft(fake_cli, capsys):
     fake_cli.set(["gh", "pr", "view", "--json", _PR_FIELDS], stdout=pr_json(isDraft=True))
     rc = run(["pr", "merge"])
@@ -225,7 +252,8 @@ def test_merge_blocks_draft(fake_cli, capsys):
 
 def test_merge_blocks_changes_requested(fake_cli, capsys):
     fake_cli.set(
-        ["gh", "pr", "view", "--json", _PR_FIELDS], stdout=pr_json(reviewDecision="CHANGES_REQUESTED")
+        ["gh", "pr", "view", "--json", _PR_FIELDS],
+        stdout=pr_json(reviewDecision="CHANGES_REQUESTED"),
     )
     rc = run(["pr", "merge"])
     assert rc == 1
@@ -234,7 +262,16 @@ def test_merge_blocks_changes_requested(fake_cli, capsys):
 
 def test_merge_blocks_unresolved_threads(fake_cli, capsys):
     fake_cli.set(["gh", "pr", "view", "--json", _PR_FIELDS], stdout=pr_json())
-    fake_cli.set(["gh", "repo", "view", "--json", "owner,name,nameWithOwner,url,defaultBranchRef"], stdout=repo_json())
+    fake_cli.set(
+        [
+            "gh",
+            "repo",
+            "view",
+            "--json",
+            "owner,name,nameWithOwner,url,defaultBranchRef",
+        ],
+        stdout=repo_json(),
+    )
     fake_cli.set(
         [
             "gh",
@@ -256,7 +293,13 @@ def test_merge_blocks_unresolved_threads(fake_cli, capsys):
                         "pullRequest": {
                             "reviewThreads": {
                                 "pageInfo": {"hasNextPage": False, "endCursor": None},
-                                "nodes": [{"id": "T_1", "isResolved": False, "comments": {"nodes": []}}],
+                                "nodes": [
+                                    {
+                                        "id": "T_1",
+                                        "isResolved": False,
+                                        "comments": {"nodes": []},
+                                    }
+                                ],
                             }
                         }
                     }
@@ -274,11 +317,25 @@ def test_merge_blocks_failed_checks(fake_cli, capsys):
         ["gh", "pr", "view", "--json", _PR_FIELDS],
         stdout=pr_json(
             statusCheckRollup=[
-                {"name": "build", "status": "COMPLETED", "conclusion": "FAILURE", "detailsUrl": "u1"}
+                {
+                    "name": "build",
+                    "status": "COMPLETED",
+                    "conclusion": "FAILURE",
+                    "detailsUrl": "u1",
+                }
             ]
         ),
     )
-    fake_cli.set(["gh", "repo", "view", "--json", "owner,name,nameWithOwner,url,defaultBranchRef"], stdout=repo_json())
+    fake_cli.set(
+        [
+            "gh",
+            "repo",
+            "view",
+            "--json",
+            "owner,name,nameWithOwner,url,defaultBranchRef",
+        ],
+        stdout=repo_json(),
+    )
     fake_cli.set(
         [
             "gh",
@@ -302,7 +359,16 @@ def test_merge_blocks_failed_checks(fake_cli, capsys):
 
 def test_merge_succeeds_when_clean(fake_cli):
     fake_cli.set(["gh", "pr", "view", "--json", _PR_FIELDS], stdout=pr_json())
-    fake_cli.set(["gh", "repo", "view", "--json", "owner,name,nameWithOwner,url,defaultBranchRef"], stdout=repo_json())
+    fake_cli.set(
+        [
+            "gh",
+            "repo",
+            "view",
+            "--json",
+            "owner,name,nameWithOwner,url,defaultBranchRef",
+        ],
+        stdout=repo_json(),
+    )
     fake_cli.set(
         [
             "gh",
@@ -325,7 +391,16 @@ def test_merge_succeeds_when_clean(fake_cli):
 
 def test_ship_defaults_delete_branch(fake_cli):
     fake_cli.set(["gh", "pr", "view", "--json", _PR_FIELDS], stdout=pr_json())
-    fake_cli.set(["gh", "repo", "view", "--json", "owner,name,nameWithOwner,url,defaultBranchRef"], stdout=repo_json())
+    fake_cli.set(
+        [
+            "gh",
+            "repo",
+            "view",
+            "--json",
+            "owner,name,nameWithOwner,url,defaultBranchRef",
+        ],
+        stdout=repo_json(),
+    )
     fake_cli.set(
         [
             "gh",
@@ -355,6 +430,7 @@ def test_merge_force_skips_preflight(fake_cli):
 # ---------------------------------------------------------------------------
 # check — target branch + ticket reference
 
+
 def test_check_shows_target_and_found_ticket(fake_cli, capsys):
     fake_cli.fail(["git", "remote", "get-url", "origin"], stderr="not a git repository")
     fake_cli.set(
@@ -376,7 +452,7 @@ def test_check_fails_when_no_ticket_reference(fake_cli, capsys):
         stdout=pr_json(title="Fix widget rendering", body="no ticket mentioned here"),
     )
     rc = run(["pr", "check"])
-    out, err = capsys.readouterr()
+    out, _err = capsys.readouterr()
     assert rc == 1
     assert "no reference found" in out
 
@@ -444,7 +520,14 @@ def test_check_parses_repo_from_pr_url(fake_cli, capsys, tmp_path):
     checkout.mkdir()
     registry.record_seen(str(checkout), "acme/widgets", "feature")
     fake_cli.set(
-        ["gh", "pr", "view", "https://github.com/acme/widgets/pull/7", "--json", _PR_FIELDS],
+        [
+            "gh",
+            "pr",
+            "view",
+            "https://github.com/acme/widgets/pull/7",
+            "--json",
+            _PR_FIELDS,
+        ],
         stdout=pr_json(title="Fix widget rendering", body="Fixes #42", headRefName="feature"),
     )
     fake_cli.set(["git", "-C", str(checkout), "status", "--short"], stdout="")
@@ -477,16 +560,35 @@ def test_check_multiple_prs_reports_each_and_aggregates_failure(fake_cli, capsys
 # ---------------------------------------------------------------------------
 # board — local sqlite cache of open PRs
 
+
 def _board_list_args(host):
     from zithub import gh as gh_mod
 
-    return ["gh", "api", "--hostname", host, "graphql", "-f", f"query={gh_mod._BOARD_PR_LIST_QUERY}", "-F", "q=is:pr is:open author:@me"]
+    return [
+        "gh",
+        "api",
+        "--hostname",
+        host,
+        "graphql",
+        "-f",
+        f"query={gh_mod._BOARD_PR_LIST_QUERY}",
+        "-F",
+        "q=is:pr is:open author:@me",
+    ]
 
 
 def _board_details_args(host, ids):
     from zithub import gh as gh_mod
 
-    args = ["gh", "api", "--hostname", host, "graphql", "-f", f"query={gh_mod._BOARD_PR_DETAILS_QUERY}"]
+    args = [
+        "gh",
+        "api",
+        "--hostname",
+        host,
+        "graphql",
+        "-f",
+        f"query={gh_mod._BOARD_PR_DETAILS_QUERY}",
+    ]
     for i in ids:
         args += ["-f", f"ids[]={i}"]
     return args
@@ -499,7 +601,12 @@ def _board_list_json(*refs):
                 "search": {
                     "pageInfo": {"hasNextPage": False, "endCursor": None},
                     "nodes": [
-                        {"id": pr_id, "number": n, "updatedAt": updated, "repository": {"nameWithOwner": "acme/widgets"}}
+                        {
+                            "id": pr_id,
+                            "number": n,
+                            "updatedAt": updated,
+                            "repository": {"nameWithOwner": "acme/widgets"},
+                        }
                         for pr_id, n, updated in refs
                     ],
                 }
@@ -545,8 +652,14 @@ def test_board_sync_then_list_and_query(fake_cli, capsys, monkeypatch):
     from zithub import board
 
     monkeypatch.delenv("GH_HOST", raising=False)
-    fake_cli.set(["git", "remote", "get-url", "origin"], stdout="git@ghe.example.com:acme/widgets.git")
-    fake_cli.set(_board_list_args("ghe.example.com"), stdout=_board_list_json(("PR_1", 1, "2026-09-01T00:00:00Z")))
+    fake_cli.set(
+        ["git", "remote", "get-url", "origin"],
+        stdout="git@ghe.example.com:acme/widgets.git",
+    )
+    fake_cli.set(
+        _board_list_args("ghe.example.com"),
+        stdout=_board_list_json(("PR_1", 1, "2026-09-01T00:00:00Z")),
+    )
     fake_cli.set(
         _board_details_args("ghe.example.com", ["PR_1"]),
         stdout=json.dumps({"data": {"nodes": [_board_detail_node("PR_1", 1)]}}),
@@ -625,7 +738,8 @@ def test_board_query_rejects_write_statements(fake_cli, capsys, monkeypatch):
 
 
 def test_board_focus_groups_by_what_needs_action(capsys, monkeypatch):
-    from zithub import board, gh as gh_mod
+    from zithub import board
+    from zithub import gh as gh_mod
 
     monkeypatch.setenv("GH_HOST", "github.com")
 
@@ -652,7 +766,11 @@ def test_board_focus_groups_by_what_needs_action(capsys, monkeypatch):
             pr(1, ci_state="failed"),  # fix CI
             pr(5, ci_state="failed", repo="acme/gadgets"),  # fix CI, other repo
             pr(6, ci_state="failed"),  # fix CI
-            pr(2, last_comment_author="someone_else", last_comment_at="2026-09-05T00:00:00Z"),  # needs your reply
+            pr(
+                2,
+                last_comment_author="someone_else",
+                last_comment_at="2026-09-05T00:00:00Z",
+            ),  # needs your reply
             pr(3, review_decision="APPROVED", ci_state="success"),  # ready to merge
             pr(4, review_decision="REVIEW_REQUIRED"),  # waiting on others
         ],
@@ -698,11 +816,25 @@ def set_preflight_up_to_ci(fake_cli, branch="main", sha="abc123", dirty=""):
         stdout=json.dumps({"hosts": {"github.com": [{"login": "vivainio", "active": True}]}}),
     )
     fake_cli.set(
-        ["gh", "repo", "view", "--json", "owner,name,nameWithOwner,url,defaultBranchRef"],
+        [
+            "gh",
+            "repo",
+            "view",
+            "--json",
+            "owner,name,nameWithOwner,url,defaultBranchRef",
+        ],
         stdout=repo_json(),
     )
     fake_cli.set(
-        ["gh", "release", "list", "--limit", "5", "--json", "tagName,name,publishedAt,isDraft,isPrerelease"],
+        [
+            "gh",
+            "release",
+            "list",
+            "--limit",
+            "5",
+            "--json",
+            "tagName,name,publishedAt,isDraft,isPrerelease",
+        ],
         stdout="[]",
     )
     fake_cli.set(["git", "status", "--short"], stdout=dirty)
@@ -713,9 +845,28 @@ def set_preflight_up_to_ci(fake_cli, branch="main", sha="abc123", dirty=""):
 
 def set_ci_success(fake_cli, sha="abc123"):
     fake_cli.set(
-        ["gh", "run", "list", "--commit", sha, "--limit", "100", "--json", _RUN_LIST_FIELDS],
+        [
+            "gh",
+            "run",
+            "list",
+            "--commit",
+            sha,
+            "--limit",
+            "100",
+            "--json",
+            _RUN_LIST_FIELDS,
+        ],
         stdout=json.dumps(
-            [{"databaseId": 1, "name": "build", "status": "completed", "conclusion": "success", "url": "u1", "headSha": sha}]
+            [
+                {
+                    "databaseId": 1,
+                    "name": "build",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "url": "u1",
+                    "headSha": sha,
+                }
+            ]
         ),
     )
 
@@ -735,14 +886,93 @@ def test_release_bare_pass_no_previous_release(fake_cli, monkeypatch, capsys):
     assert "zh release create <version>" in out
 
 
+def _set_ci_pending(fake_cli, sha="abc123"):
+    fake_cli.set(
+        [
+            "gh",
+            "run",
+            "list",
+            "--commit",
+            sha,
+            "--limit",
+            "100",
+            "--json",
+            _RUN_LIST_FIELDS,
+        ],
+        stdout=json.dumps(
+            [
+                {
+                    "databaseId": 1,
+                    "name": "build",
+                    "status": "in_progress",
+                    "conclusion": "",
+                    "url": "u1",
+                    "headSha": sha,
+                }
+            ]
+        ),
+    )
+
+
+def test_release_preflight_announces_itself(fake_cli, monkeypatch, capsys):
+    import zithub.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
+    set_preflight_up_to_ci(fake_cli)
+    set_ci_success(fake_cli)
+    fake_cli.set(["git", "log", "-50", "--oneline", "--no-decorate"], stdout="")
+    run(["release"])
+    out = capsys.readouterr().out
+    assert out.splitlines()[0].startswith("release preflight:")
+    assert "fetching origin" in out
+
+
+def test_release_preflight_ci_timeout_is_explained(fake_cli, monkeypatch, capsys):
+    import zithub.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
+    set_preflight_up_to_ci(fake_cli)
+    _set_ci_pending(fake_cli)
+    rc = run(["release"])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "blocking until checks finish" in captured.out
+    assert "waiting on CI (" in captured.out
+    assert "timed out after 10m00s waiting for CI" in captured.err
+
+
 def test_release_bare_suggests_bumps(fake_cli, monkeypatch, capsys):
     import zithub.cli as cli_mod
 
     monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
     set_preflight_up_to_ci(fake_cli)
     fake_cli._responses[
-        ("gh", "release", "list", "--limit", "5", "--json", "tagName,name,publishedAt,isDraft,isPrerelease")
-    ] = [(json.dumps([{"tagName": "v1.2.3", "name": "v1.2.3", "publishedAt": "t", "isDraft": False, "isPrerelease": False}]), 0, "")]
+        (
+            "gh",
+            "release",
+            "list",
+            "--limit",
+            "5",
+            "--json",
+            "tagName,name,publishedAt,isDraft,isPrerelease",
+        )
+    ] = [
+        (
+            json.dumps(
+                [
+                    {
+                        "tagName": "v1.2.3",
+                        "name": "v1.2.3",
+                        "publishedAt": "t",
+                        "isDraft": False,
+                        "isPrerelease": False,
+                    }
+                ]
+            ),
+            0,
+            "",
+        )
+    ]
     set_ci_success(fake_cli)
     fake_cli.set(["git", "log", "v1.2.3..HEAD", "--oneline", "--no-decorate"], stdout="")
     rc = run(["release"])
@@ -811,11 +1041,31 @@ def test_release_bare_no_ci_found_proceeds(fake_cli, monkeypatch, capsys):
     monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
     set_preflight_up_to_ci(fake_cli)
     fake_cli.set(
-        ["gh", "run", "list", "--commit", "abc123", "--limit", "100", "--json", _RUN_LIST_FIELDS],
+        [
+            "gh",
+            "run",
+            "list",
+            "--commit",
+            "abc123",
+            "--limit",
+            "100",
+            "--json",
+            _RUN_LIST_FIELDS,
+        ],
         stdout="[]",
     )
     fake_cli.set(
-        ["gh", "run", "list", "--branch", "main", "--limit", "5", "--json", _RUN_LIST_FIELDS],
+        [
+            "gh",
+            "run",
+            "list",
+            "--branch",
+            "main",
+            "--limit",
+            "5",
+            "--json",
+            _RUN_LIST_FIELDS,
+        ],
         stdout="[]",
     )
     fake_cli.set(["git", "log", "-50", "--oneline", "--no-decorate"], stdout="")
@@ -832,9 +1082,28 @@ def test_release_bare_ci_failed(fake_cli, monkeypatch, capsys):
     monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
     set_preflight_up_to_ci(fake_cli)
     fake_cli.set(
-        ["gh", "run", "list", "--commit", "abc123", "--limit", "100", "--json", _RUN_LIST_FIELDS],
+        [
+            "gh",
+            "run",
+            "list",
+            "--commit",
+            "abc123",
+            "--limit",
+            "100",
+            "--json",
+            _RUN_LIST_FIELDS,
+        ],
         stdout=json.dumps(
-            [{"databaseId": 1, "name": "build", "status": "completed", "conclusion": "failure", "url": "u1", "headSha": "abc123"}]
+            [
+                {
+                    "databaseId": 1,
+                    "name": "build",
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "url": "u1",
+                    "headSha": "abc123",
+                }
+            ]
         ),
     )
     fake_cli.set(["gh", "run", "view", "1", "--log-failed"], stdout="boom at line 42")
@@ -847,7 +1116,17 @@ def test_release_bare_ci_failed(fake_cli, monkeypatch, capsys):
 
 def _set_no_publish_workflow(fake_cli):
     fake_cli.set(
-        ["gh", "run", "list", "--event", "release", "--limit", "10", "--json", _RUN_LIST_FIELDS],
+        [
+            "gh",
+            "run",
+            "list",
+            "--event",
+            "release",
+            "--limit",
+            "10",
+            "--json",
+            _RUN_LIST_FIELDS,
+        ],
         stdout="[]",
     )
 
@@ -859,11 +1138,33 @@ def test_release_create_preflight_flag_runs_preflight_then_creates(fake_cli, mon
     set_preflight_up_to_ci(fake_cli)
     set_ci_success(fake_cli)
     fake_cli.set(
-        ["gh", "release", "create", "v1.0.0", "--notes", "first release", "--title", "v1.0.0", "--target", "main"],
+        [
+            "gh",
+            "release",
+            "create",
+            "v1.0.0",
+            "--notes",
+            "first release",
+            "--title",
+            "v1.0.0",
+            "--target",
+            "main",
+        ],
         stdout="https://github.com/acme/widgets/releases/tag/v1.0.0",
     )
     _set_no_publish_workflow(fake_cli)
-    rc = run(["release", "create", "v1.0.0", "-n", "first release", "-t", "v1.0.0", "--preflight"])
+    rc = run(
+        [
+            "release",
+            "create",
+            "v1.0.0",
+            "-n",
+            "first release",
+            "-t",
+            "v1.0.0",
+            "--preflight",
+        ]
+    )
     out = capsys.readouterr().out
     assert rc == 0
     assert "released:" in out
@@ -883,8 +1184,9 @@ def test_release_create_skips_preflight_by_default(fake_cli, monkeypatch):
 
 
 def test_release_create_waits_for_publish_workflow_success(fake_cli, monkeypatch, capsys):
-    import zithub.cli as cli_mod
     from datetime import datetime, timezone
+
+    import zithub.cli as cli_mod
 
     monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
     created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -893,7 +1195,17 @@ def test_release_create_waits_for_publish_workflow_success(fake_cli, monkeypatch
         stdout="https://github.com/acme/widgets/releases/tag/v1.0.0",
     )
     fake_cli.set(
-        ["gh", "run", "list", "--event", "release", "--limit", "10", "--json", _RUN_LIST_FIELDS],
+        [
+            "gh",
+            "run",
+            "list",
+            "--event",
+            "release",
+            "--limit",
+            "10",
+            "--json",
+            _RUN_LIST_FIELDS,
+        ],
         stdout=json.dumps(
             [
                 {
@@ -915,8 +1227,9 @@ def test_release_create_waits_for_publish_workflow_success(fake_cli, monkeypatch
 
 
 def test_release_create_reports_publish_workflow_failure(fake_cli, monkeypatch, capsys):
-    import zithub.cli as cli_mod
     from datetime import datetime, timezone
+
+    import zithub.cli as cli_mod
 
     monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
     created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -925,7 +1238,17 @@ def test_release_create_reports_publish_workflow_failure(fake_cli, monkeypatch, 
         stdout="https://github.com/acme/widgets/releases/tag/v1.0.0",
     )
     fake_cli.set(
-        ["gh", "run", "list", "--event", "release", "--limit", "10", "--json", _RUN_LIST_FIELDS],
+        [
+            "gh",
+            "run",
+            "list",
+            "--event",
+            "release",
+            "--limit",
+            "10",
+            "--json",
+            _RUN_LIST_FIELDS,
+        ],
         stdout=json.dumps(
             [
                 {
@@ -957,10 +1280,35 @@ def test_release_create_requires_notes(fake_cli):
 # ---------------------------------------------------------------------------
 # release patch/minor/major
 
+
 def _set_previous_release(fake_cli, tag="v1.2.3"):
     fake_cli._responses[
-        ("gh", "release", "list", "--limit", "5", "--json", "tagName,name,publishedAt,isDraft,isPrerelease")
-    ] = [(json.dumps([{"tagName": tag, "name": tag, "publishedAt": "t", "isDraft": False, "isPrerelease": False}]), 0, "")]
+        (
+            "gh",
+            "release",
+            "list",
+            "--limit",
+            "5",
+            "--json",
+            "tagName,name,publishedAt,isDraft,isPrerelease",
+        )
+    ] = [
+        (
+            json.dumps(
+                [
+                    {
+                        "tagName": tag,
+                        "name": tag,
+                        "publishedAt": "t",
+                        "isDraft": False,
+                        "isPrerelease": False,
+                    }
+                ]
+            ),
+            0,
+            "",
+        )
+    ]
 
 
 def test_release_patch_shows_computed_version_and_gh_hint(fake_cli, monkeypatch, capsys):
@@ -998,8 +1346,26 @@ def test_release_minor_never_creates(fake_cli, monkeypatch, capsys):
 
 def test_release_major_force_uses_recent_releases_without_preflight(fake_cli):
     fake_cli.set(
-        ["gh", "release", "list", "--limit", "1", "--json", "tagName,name,publishedAt,isDraft,isPrerelease"],
-        stdout=json.dumps([{"tagName": "v1.2.3", "name": "v1.2.3", "publishedAt": "t", "isDraft": False, "isPrerelease": False}]),
+        [
+            "gh",
+            "release",
+            "list",
+            "--limit",
+            "1",
+            "--json",
+            "tagName,name,publishedAt,isDraft,isPrerelease",
+        ],
+        stdout=json.dumps(
+            [
+                {
+                    "tagName": "v1.2.3",
+                    "name": "v1.2.3",
+                    "publishedAt": "t",
+                    "isDraft": False,
+                    "isPrerelease": False,
+                }
+            ]
+        ),
     )
     fake_cli.set(["git", "log", "v1.2.3..HEAD", "--oneline", "--no-decorate"], stdout="")
     rc = run(["release", "major", "--force"])
@@ -1009,8 +1375,26 @@ def test_release_major_force_uses_recent_releases_without_preflight(fake_cli):
 
 def test_release_bump_target_flag_only_when_explicit(fake_cli, capsys):
     fake_cli.set(
-        ["gh", "release", "list", "--limit", "1", "--json", "tagName,name,publishedAt,isDraft,isPrerelease"],
-        stdout=json.dumps([{"tagName": "v1.2.3", "name": "v1.2.3", "publishedAt": "t", "isDraft": False, "isPrerelease": False}]),
+        [
+            "gh",
+            "release",
+            "list",
+            "--limit",
+            "1",
+            "--json",
+            "tagName,name,publishedAt,isDraft,isPrerelease",
+        ],
+        stdout=json.dumps(
+            [
+                {
+                    "tagName": "v1.2.3",
+                    "name": "v1.2.3",
+                    "publishedAt": "t",
+                    "isDraft": False,
+                    "isPrerelease": False,
+                }
+            ]
+        ),
     )
     fake_cli.set(["git", "log", "v1.2.3..HEAD", "--oneline", "--no-decorate"], stdout="")
     rc = run(["release", "patch", "--target", "release-2.0", "--force"])
@@ -1045,10 +1429,18 @@ def test_release_bump_non_semver_tag_errors(fake_cli, monkeypatch, capsys):
 # ---------------------------------------------------------------------------
 # repos — local-checkout registry
 
+
 def test_repos_lists_known_checkouts(monkeypatch, capsys):
     from zithub import registry
 
-    entries = [registry.RepoEntry(path="/home/v/r/zithub", repo="vivainio/zithub", branch="main", last_seen=0.0)]
+    entries = [
+        registry.RepoEntry(
+            path="/home/v/r/zithub",
+            repo="vivainio/zithub",
+            branch="main",
+            last_seen=0.0,
+        )
+    ]
     monkeypatch.setattr(registry, "list_seen", lambda: entries)
     rc = run(["repos"])
     out = capsys.readouterr().out
@@ -1069,7 +1461,7 @@ def test_repos_query_filters(monkeypatch):
 def test_repos_empty_is_an_error(fake_cli, monkeypatch, capsys):
     from zithub import registry
 
-    monkeypatch.setattr(registry, "list_seen", lambda: [])
+    monkeypatch.setattr(registry, "list_seen", list)
     rc = run(["repos"])
     assert rc == 1
     assert "no known checkouts" in capsys.readouterr().err
@@ -1084,7 +1476,9 @@ def test_main_records_repo_seen_for_gh_commands(monkeypatch, fake_cli):
 
     recorded = []
     monkeypatch.setattr(
-        cli_mod.registry, "record_seen", lambda path, repo, branch: recorded.append((path, repo, branch))
+        cli_mod.registry,
+        "record_seen",
+        lambda path, repo, branch: recorded.append((path, repo, branch)),
     )
     monkeypatch.setattr(cli_mod.gh, "ensure_gh_account_for_repo", lambda: None)
     monkeypatch.setattr("sys.argv", ["zh", "pr", "check"])
@@ -1101,9 +1495,11 @@ def test_main_does_not_record_for_repos_command(monkeypatch, fake_cli):
 
     recorded = []
     monkeypatch.setattr(
-        cli_mod.registry, "record_seen", lambda path, repo, branch: recorded.append((path, repo, branch))
+        cli_mod.registry,
+        "record_seen",
+        lambda path, repo, branch: recorded.append((path, repo, branch)),
     )
-    monkeypatch.setattr(cli_mod.registry, "list_seen", lambda: [])
+    monkeypatch.setattr(cli_mod.registry, "list_seen", list)
     monkeypatch.setattr("sys.argv", ["zh", "repos"])
 
     with pytest.raises(SystemExit):
@@ -1115,11 +1511,18 @@ def test_main_does_not_record_for_repos_command(monkeypatch, fake_cli):
 def test_merge_pending_without_wait_blocks(fake_cli, capsys):
     fake_cli.set(
         ["gh", "pr", "view", "--json", _PR_FIELDS],
-        stdout=pr_json(
-            statusCheckRollup=[{"name": "build", "status": "IN_PROGRESS", "conclusion": None}]
-        ),
+        stdout=pr_json(statusCheckRollup=[{"name": "build", "status": "IN_PROGRESS", "conclusion": None}]),
     )
-    fake_cli.set(["gh", "repo", "view", "--json", "owner,name,nameWithOwner,url,defaultBranchRef"], stdout=repo_json())
+    fake_cli.set(
+        [
+            "gh",
+            "repo",
+            "view",
+            "--json",
+            "owner,name,nameWithOwner,url,defaultBranchRef",
+        ],
+        stdout=repo_json(),
+    )
     fake_cli.set(
         [
             "gh",
@@ -1172,7 +1575,10 @@ def _set_two_accounts(fake_cli, origin):
             }
         ),
     )
-    fake_cli.set(["gh", "auth", "token", "--hostname", "github.com", "--user", "vivainio"], stdout="tok-vivainio")
+    fake_cli.set(
+        ["gh", "auth", "token", "--hostname", "github.com", "--user", "vivainio"],
+        stdout="tok-vivainio",
+    )
 
 
 @pytest.fixture
@@ -1217,7 +1623,14 @@ def test_git_over_https_uses_gh_helper_and_owner_token(fake_cli, passthrough_cal
     assert run(["git", "push", "origin", "main"]) == 0
     [(args, env)] = passthrough_calls
     assert args == [
-        "git", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential", "push", "origin", "main",
+        "git",
+        "-c",
+        "credential.helper=",
+        "-c",
+        "credential.helper=!gh auth git-credential",
+        "push",
+        "origin",
+        "main",
     ]
     assert env["GH_TOKEN"] == "tok-vivainio"
 
@@ -1229,12 +1642,18 @@ def test_git_over_ssh_is_plain_git(fake_cli, passthrough_calls):
 
 
 def test_gh_passthrough_looks_up_accounts_on_origins_host(fake_cli, passthrough_calls):
-    fake_cli.set(["git", "remote", "get-url", "origin"], stdout="https://ghe.example.com/acme/widgets.git")
+    fake_cli.set(
+        ["git", "remote", "get-url", "origin"],
+        stdout="https://ghe.example.com/acme/widgets.git",
+    )
     fake_cli.set(
         ["gh", "auth", "status", "--json", "hosts"],
         stdout=json.dumps({"hosts": {"ghe.example.com": [{"login": "acme", "active": False}]}}),
     )
-    fake_cli.set(["gh", "auth", "token", "--hostname", "ghe.example.com", "--user", "acme"], stdout="tok-ghe")
+    fake_cli.set(
+        ["gh", "auth", "token", "--hostname", "ghe.example.com", "--user", "acme"],
+        stdout="tok-ghe",
+    )
     assert run(["gh", "pr", "list"]) == 0
     [(_args, env)] = passthrough_calls
     assert env["GH_TOKEN"] == "tok-ghe"

@@ -53,7 +53,10 @@ def _quote(prefix: str, text: str) -> list[str]:
 
 
 def render(
-    repo: str, pr: gh.PullRequest, threads: list[gh.ReviewThread], show_resolved: bool = False
+    repo: str,
+    pr: gh.PullRequest,
+    threads: list[gh.ReviewThread],
+    show_resolved: bool = False,
 ) -> str:
     """The scaffold for a PR: header directive + per-thread context, with
     every action commented out so applying it untouched does nothing."""

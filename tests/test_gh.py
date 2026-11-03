@@ -23,7 +23,13 @@ def test_run_raises_zithub_error_when_binary_missing(monkeypatch):
 
 def test_run_raises_zithub_error_on_nonzero_exit(fake_cli):
     fake_cli.fail(
-        ["gh", "repo", "view", "--json", "owner,name,nameWithOwner,url,defaultBranchRef"],
+        [
+            "gh",
+            "repo",
+            "view",
+            "--json",
+            "owner,name,nameWithOwner,url,defaultBranchRef",
+        ],
         stderr="not a repository",
     )
     with pytest.raises(gh.ZithubError, match="not a repository"):
@@ -32,7 +38,13 @@ def test_run_raises_zithub_error_on_nonzero_exit(fake_cli):
 
 def test_repo_info(fake_cli):
     fake_cli.set(
-        ["gh", "repo", "view", "--json", "owner,name,nameWithOwner,url,defaultBranchRef"],
+        [
+            "gh",
+            "repo",
+            "view",
+            "--json",
+            "owner,name,nameWithOwner,url,defaultBranchRef",
+        ],
         stdout=json.dumps(
             {
                 "owner": {"login": "acme"},
@@ -74,8 +86,18 @@ _PR_JSON = {
     "headRefName": "feature",
     "baseRefName": "main",
     "statusCheckRollup": [
-        {"name": "build", "status": "COMPLETED", "conclusion": "SUCCESS", "detailsUrl": "u1"},
-        {"name": "lint", "status": "IN_PROGRESS", "conclusion": None, "detailsUrl": "u2"},
+        {
+            "name": "build",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "u1",
+        },
+        {
+            "name": "lint",
+            "status": "IN_PROGRESS",
+            "conclusion": None,
+            "detailsUrl": "u2",
+        },
     ],
 }
 
@@ -219,7 +241,10 @@ def test_review_threads_paginates_comments_within_a_thread(fake_cli):
                                 "id": "T_1",
                                 "isResolved": False,
                                 "comments": {
-                                    "pageInfo": {"hasNextPage": True, "endCursor": "CCURSOR1"},
+                                    "pageInfo": {
+                                        "hasNextPage": True,
+                                        "endCursor": "CCURSOR1",
+                                    },
                                     "nodes": [
                                         {
                                             "id": "C_1",
@@ -357,6 +382,7 @@ def test_reply_to_thread(fake_cli):
 # ---------------------------------------------------------------------------
 # release preflight plumbing
 
+
 def test_current_branch(fake_cli):
     fake_cli.set(["git", "rev-parse", "--abbrev-ref", "HEAD"], stdout="main\n")
     assert gh.current_branch() == "main"
@@ -407,7 +433,10 @@ def test_list_gh_accounts(fake_cli):
 
 
 def test_ensure_gh_account_for_repo_no_op_when_already_active(fake_cli):
-    fake_cli.set(["git", "remote", "get-url", "origin"], stdout="git@github.com:vivainio/zithub.git")
+    fake_cli.set(
+        ["git", "remote", "get-url", "origin"],
+        stdout="git@github.com:vivainio/zithub.git",
+    )
     fake_cli.set(
         ["gh", "auth", "status", "--json", "hosts"],
         stdout=json.dumps({"hosts": {"github.com": [{"login": "vivainio", "active": True}]}}),
@@ -416,7 +445,10 @@ def test_ensure_gh_account_for_repo_no_op_when_already_active(fake_cli):
 
 
 def test_ensure_gh_account_for_repo_switches_by_login_match(fake_cli):
-    fake_cli.set(["git", "remote", "get-url", "origin"], stdout="git@github.com:vivainio/zithub.git")
+    fake_cli.set(
+        ["git", "remote", "get-url", "origin"],
+        stdout="git@github.com:vivainio/zithub.git",
+    )
     fake_cli.set(
         ["gh", "auth", "status", "--json", "hosts"],
         stdout=json.dumps(
@@ -431,14 +463,18 @@ def test_ensure_gh_account_for_repo_switches_by_login_match(fake_cli):
         ),
     )
     fake_cli.set(
-        ["gh", "auth", "switch", "--hostname", "github.com", "--user", "vivainio"], returncode=0
+        ["gh", "auth", "switch", "--hostname", "github.com", "--user", "vivainio"],
+        returncode=0,
     )
     notice = gh.ensure_gh_account_for_repo()
     assert notice == "switched active gh account to vivainio (owner of vivainio's repos)"
 
 
 def test_ensure_gh_account_for_repo_switches_by_org_suffix_match(fake_cli):
-    fake_cli.set(["git", "remote", "get-url", "origin"], stdout="git@github.com:Basware/widgets.git")
+    fake_cli.set(
+        ["git", "remote", "get-url", "origin"],
+        stdout="git@github.com:Basware/widgets.git",
+    )
     fake_cli.set(
         ["gh", "auth", "status", "--json", "hosts"],
         stdout=json.dumps(
@@ -453,7 +489,15 @@ def test_ensure_gh_account_for_repo_switches_by_org_suffix_match(fake_cli):
         ),
     )
     fake_cli.set(
-        ["gh", "auth", "switch", "--hostname", "github.com", "--user", "villevai_Basware"],
+        [
+            "gh",
+            "auth",
+            "switch",
+            "--hostname",
+            "github.com",
+            "--user",
+            "villevai_Basware",
+        ],
         returncode=0,
     )
     notice = gh.ensure_gh_account_for_repo()
@@ -461,7 +505,10 @@ def test_ensure_gh_account_for_repo_switches_by_org_suffix_match(fake_cli):
 
 
 def test_ensure_gh_account_for_repo_no_matching_account_is_noop(fake_cli):
-    fake_cli.set(["git", "remote", "get-url", "origin"], stdout="git@github.com:someoneelse/widgets.git")
+    fake_cli.set(
+        ["git", "remote", "get-url", "origin"],
+        stdout="git@github.com:someoneelse/widgets.git",
+    )
     fake_cli.set(
         ["gh", "auth", "status", "--json", "hosts"],
         stdout=json.dumps({"hosts": {"github.com": [{"login": "vivainio", "active": True}]}}),
@@ -476,11 +523,35 @@ def test_ensure_gh_account_for_repo_no_remote_is_noop(fake_cli):
 
 def test_runs_for_commit_filters_by_sha(fake_cli):
     fake_cli.set(
-        ["gh", "run", "list", "--commit", "abc123", "--limit", "100", "--json", gh._RUN_LIST_FIELDS],
+        [
+            "gh",
+            "run",
+            "list",
+            "--commit",
+            "abc123",
+            "--limit",
+            "100",
+            "--json",
+            gh._RUN_LIST_FIELDS,
+        ],
         stdout=json.dumps(
             [
-                {"databaseId": 1, "name": "build", "status": "completed", "conclusion": "success", "url": "u1", "headSha": "abc123"},
-                {"databaseId": 2, "name": "stale", "status": "completed", "conclusion": "success", "url": "u2", "headSha": "def456"},
+                {
+                    "databaseId": 1,
+                    "name": "build",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "url": "u1",
+                    "headSha": "abc123",
+                },
+                {
+                    "databaseId": 2,
+                    "name": "stale",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "url": "u2",
+                    "headSha": "def456",
+                },
             ]
         ),
     )
@@ -514,7 +585,10 @@ def test_create_release_builds_command(fake_cli):
         ("https://github.com/acme/widgets.git", "github.com"),
         ("git@ghe.example.com:acme/widgets.git", "ghe.example.com"),
         ("ssh://git@GHE.example.com:2222/acme/widgets", "ghe.example.com"),
-        ("git@github-work:acme/widgets.git", "github.com"),  # ssh alias, not a real host
+        (
+            "git@github-work:acme/widgets.git",
+            "github.com",
+        ),  # ssh alias, not a real host
     ],
 )
 def test_current_host_from_origin(fake_cli, monkeypatch, url, expected):
@@ -536,7 +610,17 @@ def test_current_host_defaults_to_github_com_outside_a_repo(fake_cli, monkeypatc
 
 def test_board_pr_details_retries_transient_gateway_errors(fake_cli, monkeypatch):
     monkeypatch.setattr(gh.time, "sleep", lambda _s: None)
-    args = ["gh", "api", "--hostname", "github.com", "graphql", "-f", f"query={gh._BOARD_PR_DETAILS_QUERY}", "-f", "ids[]=PR_1"]
+    args = [
+        "gh",
+        "api",
+        "--hostname",
+        "github.com",
+        "graphql",
+        "-f",
+        f"query={gh._BOARD_PR_DETAILS_QUERY}",
+        "-f",
+        "ids[]=PR_1",
+    ]
     fake_cli.fail(args, stderr="gh: HTTP 502")
     fake_cli.fail(args, stderr="stream error: stream ID 1; CANCEL; received from peer")
     fake_cli.set(args, stdout='{"data": {"nodes": [null]}}')
@@ -545,7 +629,17 @@ def test_board_pr_details_retries_transient_gateway_errors(fake_cli, monkeypatch
 
 def test_board_pr_details_does_not_retry_other_errors(fake_cli, monkeypatch):
     monkeypatch.setattr(gh.time, "sleep", lambda _s: None)
-    args = ["gh", "api", "--hostname", "github.com", "graphql", "-f", f"query={gh._BOARD_PR_DETAILS_QUERY}", "-f", "ids[]=PR_1"]
+    args = [
+        "gh",
+        "api",
+        "--hostname",
+        "github.com",
+        "graphql",
+        "-f",
+        f"query={gh._BOARD_PR_DETAILS_QUERY}",
+        "-f",
+        "ids[]=PR_1",
+    ]
     fake_cli.fail(args, stderr="gh: Not Found (HTTP 404)")
     fake_cli.set(args, stdout='{"data": {"nodes": []}}')
     with pytest.raises(gh.ZithubError, match="404"):
@@ -553,13 +647,26 @@ def test_board_pr_details_does_not_retry_other_errors(fake_cli, monkeypatch):
 
 
 def test_board_pr_details_skips_bot_comments_and_unescapes_title(fake_cli):
-    args = ["gh", "api", "--hostname", "github.com", "graphql", "-f", f"query={gh._BOARD_PR_DETAILS_QUERY}", "-f", "ids[]=PR_1"]
+    args = [
+        "gh",
+        "api",
+        "--hostname",
+        "github.com",
+        "graphql",
+        "-f",
+        f"query={gh._BOARD_PR_DETAILS_QUERY}",
+        "-f",
+        "ids[]=PR_1",
+    ]
     comments = [
         {"createdAt": "t1", "author": {"__typename": "User", "login": "reviewer1"}},
         {"createdAt": "t2", "author": {"__typename": "Bot", "login": "some-app"}},
         {"createdAt": "t3", "author": {"__typename": "User", "login": "snyk-io"}},
         {"createdAt": "t4", "author": {"__typename": "User", "login": "renovate[bot]"}},
-        {"createdAt": "t5", "author": {"__typename": "User", "login": "Github-CI_Acme"}},
+        {
+            "createdAt": "t5",
+            "author": {"__typename": "User", "login": "Github-CI_Acme"},
+        },
     ]
     node = {
         "id": "PR_1",
@@ -619,7 +726,7 @@ def test_uv_lock_private_mirrors_flags_non_public_hosts(tmp_path):
         'source = { registry = "https://pypi.org/simple" }\n\n'
         '[[package]]\nname = "bar"\n'
         'source = { registry = "https://pkgs.internal.example.com/simple" }\n\n'
-        '[[package.wheels]]\n'
+        "[[package.wheels]]\n"
         'url = "https://files.pythonhosted.org/packages/bar.whl"\n'
     )
     assert gh.uv_lock_private_mirrors(str(lock)) == ["pkgs.internal.example.com"]
@@ -641,9 +748,9 @@ def test_fix_uv_lock_mirror_rewrites_registry_and_package_urls(tmp_path):
         '[[package]]\nname = "foo"\n'
         'source = { registry = "https://pypi-mirror.example.com/simple" }\n'
         'sdist = { url = "https://pypi-mirror.example.com/packages/foo.tar.gz" }\n'
-        'wheels = [\n'
+        "wheels = [\n"
         '    { url = "https://pypi-mirror.example.com/packages/foo.whl" },\n'
-        ']\n'
+        "]\n"
     )
     host = gh.fix_uv_lock_mirror(str(lock))
     assert host == "pypi-mirror.example.com"

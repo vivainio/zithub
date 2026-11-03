@@ -30,7 +30,12 @@ def pr_json(**overrides) -> str:
         "headRefName": "feature",
         "baseRefName": "main",
         "statusCheckRollup": [
-            {"name": "build", "status": "COMPLETED", "conclusion": "SUCCESS", "detailsUrl": "u1"}
+            {
+                "name": "build",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+                "detailsUrl": "u1",
+            }
         ],
     }
     data.update(overrides)
@@ -56,6 +61,7 @@ def _since(days: int = 7) -> str:
 # ---------------------------------------------------------------------------
 # status
 
+
 def test_status_clean_pr_all_checks_pass(fake_cli, capsys):
     fake_cli.set(["git", "fetch"], stdout="")
     fake_cli.set(["gh", "repo", "view", "--json", _REPO_FIELDS], stdout=repo_json())
@@ -63,7 +69,10 @@ def test_status_clean_pr_all_checks_pass(fake_cli, capsys):
     fake_cli.set(["git", "status", "--porcelain=v2", "--branch"], stdout="# branch.ab +0 -0")
     fake_cli.set(["git", "rev-parse", "--git-dir", "--git-common-dir"], stdout="x\nx")
     fake_cli.set(["gh", "pr", "view", "--json", _PR_FIELDS], stdout=pr_json())
-    fake_cli.set(["gh", "run", "list", "--limit", "20", "--json", gh._RUN_LIST_FIELDS], stdout="[]")
+    fake_cli.set(
+        ["gh", "run", "list", "--limit", "20", "--json", gh._RUN_LIST_FIELDS],
+        stdout="[]",
+    )
 
     rc = run(["status"])
     out = capsys.readouterr().out
@@ -83,7 +92,17 @@ def test_status_no_pr_falls_back_to_branch_ci(fake_cli, capsys):
     fake_cli.set(["git", "rev-parse", "--git-dir", "--git-common-dir"], stdout="x\nx")
     fake_cli.fail(["gh", "pr", "view", "--json", _PR_FIELDS])
     fake_cli.set(
-        ["gh", "run", "list", "--branch", "feature", "--limit", "10", "--json", gh._RUN_LIST_FIELDS],
+        [
+            "gh",
+            "run",
+            "list",
+            "--branch",
+            "feature",
+            "--limit",
+            "10",
+            "--json",
+            gh._RUN_LIST_FIELDS,
+        ],
         stdout="[]",
     )
 
@@ -97,10 +116,14 @@ def test_status_no_pr_falls_back_to_branch_ci(fake_cli, capsys):
 # ---------------------------------------------------------------------------
 # ci
 
+
 def test_ci_with_pr_shows_checks(fake_cli, capsys):
     fake_cli.set(["git", "rev-parse", "--abbrev-ref", "HEAD"], stdout="feature")
     fake_cli.set(["gh", "pr", "view", "--json", _PR_FIELDS], stdout=pr_json())
-    fake_cli.set(["gh", "run", "list", "--limit", "20", "--json", gh._RUN_LIST_FIELDS], stdout="[]")
+    fake_cli.set(
+        ["gh", "run", "list", "--limit", "20", "--json", gh._RUN_LIST_FIELDS],
+        stdout="[]",
+    )
 
     rc = run(["ci"])
     out = capsys.readouterr().out
@@ -113,7 +136,17 @@ def test_ci_no_pr_falls_back_to_branch_runs(fake_cli, capsys):
     fake_cli.set(["git", "rev-parse", "--abbrev-ref", "HEAD"], stdout="feature")
     fake_cli.fail(["gh", "pr", "view", "--json", _PR_FIELDS])
     fake_cli.set(
-        ["gh", "run", "list", "--branch", "feature", "--limit", "10", "--json", gh._RUN_LIST_FIELDS],
+        [
+            "gh",
+            "run",
+            "list",
+            "--branch",
+            "feature",
+            "--limit",
+            "10",
+            "--json",
+            gh._RUN_LIST_FIELDS,
+        ],
         stdout=json.dumps(
             [
                 {
@@ -127,7 +160,10 @@ def test_ci_no_pr_falls_back_to_branch_runs(fake_cli, capsys):
             ]
         ),
     )
-    fake_cli.set(["gh", "run", "list", "--limit", "20", "--json", gh._RUN_LIST_FIELDS], stdout="[]")
+    fake_cli.set(
+        ["gh", "run", "list", "--limit", "20", "--json", gh._RUN_LIST_FIELDS],
+        stdout="[]",
+    )
 
     rc = run(["ci"])
     out = capsys.readouterr().out
@@ -139,11 +175,15 @@ def test_ci_no_pr_falls_back_to_branch_runs(fake_cli, capsys):
 # ---------------------------------------------------------------------------
 # pr (bare status dashboard)
 
+
 def test_pr_status_shows_checks_and_threads(fake_cli, capsys):
     fake_cli.set(["gh", "repo", "view", "--json", _REPO_FIELDS], stdout=repo_json())
     fake_cli.set(["git", "rev-parse", "--abbrev-ref", "HEAD"], stdout="feature")
     fake_cli.set(["gh", "pr", "view", "--json", _PR_FIELDS], stdout=pr_json())
-    fake_cli.set(["gh", "run", "list", "--limit", "20", "--json", gh._RUN_LIST_FIELDS], stdout="[]")
+    fake_cli.set(
+        ["gh", "run", "list", "--limit", "20", "--json", gh._RUN_LIST_FIELDS],
+        stdout="[]",
+    )
     fake_cli.set(
         [
             "gh",
@@ -170,7 +210,10 @@ def test_pr_status_shows_checks_and_threads(fake_cli, capsys):
                                         "id": "T1",
                                         "isResolved": False,
                                         "comments": {
-                                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                            "pageInfo": {
+                                                "hasNextPage": False,
+                                                "endCursor": None,
+                                            },
                                             "nodes": [
                                                 {
                                                     "id": "C1",
@@ -206,7 +249,15 @@ def test_pr_status_no_pr_errors(fake_cli, capsys):
     fake_cli.fail(["gh", "pr", "view", "--json", _PR_FIELDS])
 
     fake_cli.set(
-        ["gh", "pr", "list", "--author", "@me", "--json", "number,title,url,state,isDraft,updatedAt"],
+        [
+            "gh",
+            "pr",
+            "list",
+            "--author",
+            "@me",
+            "--json",
+            "number,title,url,state,isDraft,updatedAt",
+        ],
         stdout=json.dumps(
             [
                 {
@@ -232,10 +283,19 @@ def test_pr_status_no_pr_errors(fake_cli, capsys):
 # ---------------------------------------------------------------------------
 # my / review / issues
 
+
 def test_my_this_lists_open_prs_in_current_repo(fake_cli, capsys):
     fake_cli.set(["gh", "repo", "view", "--json", _REPO_FIELDS], stdout=repo_json())
     fake_cli.set(
-        ["gh", "pr", "list", "--author", "@me", "--json", "number,title,url,state,isDraft,updatedAt"],
+        [
+            "gh",
+            "pr",
+            "list",
+            "--author",
+            "@me",
+            "--json",
+            "number,title,url,state,isDraft,updatedAt",
+        ],
         stdout=json.dumps(
             [
                 {
@@ -360,7 +420,15 @@ def test_review_lists_prs_awaiting_review(fake_cli, capsys):
 def test_issues_lists_open_issues_in_repo(fake_cli, capsys):
     fake_cli.set(["gh", "repo", "view", "--json", _REPO_FIELDS], stdout=repo_json())
     fake_cli.set(
-        ["gh", "issue", "list", "--assignee", "@me", "--json", "number,title,url,state,updatedAt"],
+        [
+            "gh",
+            "issue",
+            "list",
+            "--assignee",
+            "@me",
+            "--json",
+            "number,title,url,state,updatedAt",
+        ],
         stdout=json.dumps(
             [
                 {
@@ -422,16 +490,17 @@ def test_issues_outside_repo_shows_recent_activity(fake_cli, capsys):
 
 
 def test_status_hints_fixup_uv_lock_for_a_leaked_mirror(fake_cli, capsys, tmp_path):
-    (tmp_path / "uv.lock").write_text(
-        'source = { registry = "https://pypi-mirror.example.com/simple" }\n'
-    )
+    (tmp_path / "uv.lock").write_text('source = { registry = "https://pypi-mirror.example.com/simple" }\n')
     fake_cli.set(["git", "fetch"], stdout="")
     fake_cli.set(["gh", "repo", "view", "--json", _REPO_FIELDS], stdout=repo_json())
     fake_cli.set(["git", "rev-parse", "--abbrev-ref", "HEAD"], stdout="feature")
     fake_cli.set(["git", "status", "--porcelain=v2", "--branch"], stdout="# branch.ab +0 -0")
     fake_cli.set(["git", "rev-parse", "--git-dir", "--git-common-dir"], stdout="x\nx")
     fake_cli.set(["gh", "pr", "view", "--json", _PR_FIELDS], stdout=pr_json())
-    fake_cli.set(["gh", "run", "list", "--limit", "20", "--json", gh._RUN_LIST_FIELDS], stdout="[]")
+    fake_cli.set(
+        ["gh", "run", "list", "--limit", "20", "--json", gh._RUN_LIST_FIELDS],
+        stdout="[]",
+    )
     fake_cli.set(
         ["gh", "auth", "status", "--json", "hosts"],
         stdout=json.dumps({"hosts": {"github.com": [{"login": "vivainio", "active": True}]}}),
@@ -444,16 +513,17 @@ def test_status_hints_fixup_uv_lock_for_a_leaked_mirror(fake_cli, capsys, tmp_pa
 
 
 def test_status_ignores_leaked_mirror_for_corporate_account(fake_cli, capsys, tmp_path):
-    (tmp_path / "uv.lock").write_text(
-        'source = { registry = "https://pypi-mirror.example.com/simple" }\n'
-    )
+    (tmp_path / "uv.lock").write_text('source = { registry = "https://pypi-mirror.example.com/simple" }\n')
     fake_cli.set(["git", "fetch"], stdout="")
     fake_cli.set(["gh", "repo", "view", "--json", _REPO_FIELDS], stdout=repo_json())
     fake_cli.set(["git", "rev-parse", "--abbrev-ref", "HEAD"], stdout="feature")
     fake_cli.set(["git", "status", "--porcelain=v2", "--branch"], stdout="# branch.ab +0 -0")
     fake_cli.set(["git", "rev-parse", "--git-dir", "--git-common-dir"], stdout="x\nx")
     fake_cli.set(["gh", "pr", "view", "--json", _PR_FIELDS], stdout=pr_json())
-    fake_cli.set(["gh", "run", "list", "--limit", "20", "--json", gh._RUN_LIST_FIELDS], stdout="[]")
+    fake_cli.set(
+        ["gh", "run", "list", "--limit", "20", "--json", gh._RUN_LIST_FIELDS],
+        stdout="[]",
+    )
     fake_cli.set(
         ["gh", "auth", "status", "--json", "hosts"],
         stdout=json.dumps({"hosts": {"github.com": [{"login": "ville_Acme", "active": True}]}}),

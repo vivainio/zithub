@@ -17,9 +17,7 @@ def bump(tag: str, part: str) -> str:
     `part` is one of "major", "minor", "patch"."""
     match = _SEMVER_RE.match(tag)
     if not match:
-        raise VersionError(
-            f"'{tag}' doesn't look like a plain semver tag (vX.Y.Z) — pass the next version explicitly"
-        )
+        raise VersionError(f"'{tag}' doesn't look like a plain semver tag (vX.Y.Z) — pass the next version explicitly")
     major, minor, patch = int(match["major"]), int(match["minor"]), int(match["patch"])
     if part == "major":
         major, minor, patch = major + 1, 0, 0

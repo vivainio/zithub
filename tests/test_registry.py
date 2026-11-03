@@ -112,7 +112,7 @@ def test_compaction_dedupes_and_drops_stale_paths(tmp_path, monkeypatch):
     registry.record_seen(str(kept), "vivainio/kept", "feature-branch")
 
     with open(registry._registry_path(), encoding="utf-8") as f:
-        lines = [line for line in f.readlines() if line.strip()]
+        lines = [line for line in f if line.strip()]
     assert len(lines) == 1
     assert json.loads(lines[0])["path"] == str(kept)
     assert json.loads(lines[0])["branch"] == "feature-branch"

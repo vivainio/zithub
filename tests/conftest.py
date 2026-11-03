@@ -44,9 +44,7 @@ class FakeCli:
         queue = self._responses.get(key)
         if not queue:
             registered = "\n".join(" ".join(k) for k in self._responses)
-            raise AssertionError(
-                f"unexpected command: {args!r}\nregistered commands:\n{registered}"
-            )
+            raise AssertionError(f"unexpected command: {args!r}\nregistered commands:\n{registered}")
         stdout, returncode, stderr = queue[0] if len(queue) == 1 else queue.pop(0)
         return subprocess.CompletedProcess(args, returncode, stdout=stdout, stderr=stderr)
 

@@ -16,13 +16,19 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
 import urllib.parse
-import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-_FAILED_CONCLUSIONS = {"failure", "timed_out", "cancelled", "startup_failure", "action_required"}
+_FAILED_CONCLUSIONS = {
+    "failure",
+    "timed_out",
+    "cancelled",
+    "startup_failure",
+    "action_required",
+}
 _PENDING_STATUSES = {"in_progress", "queued", "pending", "waiting", "requested"}
 
 
@@ -30,9 +36,7 @@ class ZithubError(Exception):
     """Raised when a required CLI is missing or a command fails."""
 
 
-def _run_result(
-    args: list[str], env: dict[str, str] | None = None
-) -> subprocess.CompletedProcess:
+def _run_result(args: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     try:
         result = subprocess.run(args, capture_output=True, text=True, check=False, env=env)
     except FileNotFoundError as exc:
@@ -65,7 +69,7 @@ def run_passthrough(args: list[str], env: dict[str, str] | None = None) -> int:
     no reason to re-render what `gh` already prints well.
     """
     try:
-        return subprocess.run(args, env=env).returncode
+        return subprocess.run(args, check=False, env=env).returncode
     except FileNotFoundError as exc:
         raise ZithubError(f"`{args[0]}` not found on PATH") from exc
 
@@ -80,7 +84,15 @@ class RepoInfo:
 
 
 def repo_info() -> RepoInfo:
-    data = _run_json(["gh", "repo", "view", "--json", "owner,name,nameWithOwner,url,defaultBranchRef"])
+    data = _run_json(
+        [
+            "gh",
+            "repo",
+            "view",
+            "--json",
+            "owner,name,nameWithOwner,url,defaultBranchRef",
+        ]
+    )
     return RepoInfo(
         owner=data["owner"]["login"],
         name=data["name"],
@@ -120,7 +132,6 @@ def is_success(c: CheckRun) -> bool:
     return (c.conclusion or "").lower() == "success" or (c.status or "").lower() == "success"
 
 
-
 @dataclass
 class PullRequest:
     number: int
@@ -137,8 +148,7 @@ class PullRequest:
 
 
 _PR_VIEW_FIELDS = (
-    "number,title,url,state,isDraft,reviewDecision,statusCheckRollup,headRefName,baseRefName,body,"
-    "headRefOid"
+    "number,title,url,state,isDraft,reviewDecision,statusCheckRollup,headRefName,baseRefName,body,headRefOid"
 )
 
 
@@ -341,9 +351,7 @@ def _is_bot_author(author: dict, bot_logins: set[str]) -> bool:
     return author.get("__typename") == "Bot" or login.endswith("[bot]") or login in bot_logins
 
 
-def board_pr_details(
-    host: str, ids: list[str], extra_bot_logins: set[str] | None = None
-) -> list[BoardPr]:
+def board_pr_details(host: str, ids: list[str], extra_bot_logins: set[str] | None = None) -> list[BoardPr]:
     """The per-PR detail `zh board` needs (review decision, aggregate CI
     state, last human comment) for the given PR node ids, in one GraphQL
     call — keep `ids` to about BOARD_DETAILS_BATCH_SIZE so the query stays
@@ -351,7 +359,15 @@ def board_pr_details(
     "someone else commented last" is what `zh board focus` reads as
     "needs your reply". `extra_bot_logins` (lowercase) are skipped too,
     on top of _KNOWN_BOT_LOGINS."""
-    args = ["gh", "api", "--hostname", host, "graphql", "-f", f"query={_BOARD_PR_DETAILS_QUERY}"]
+    args = [
+        "gh",
+        "api",
+        "--hostname",
+        host,
+        "graphql",
+        "-f",
+        f"query={_BOARD_PR_DETAILS_QUERY}",
+    ]
     for pr_id in ids:
         args += ["-f", f"ids[]={pr_id}"]
     bot_logins = _KNOWN_BOT_LOGINS | (extra_bot_logins or set())
@@ -359,9 +375,7 @@ def board_pr_details(
     for node in _run_json_retrying(args)["data"]["nodes"]:
         if not node:
             continue
-        human_comments = [
-            c for c in node["comments"]["nodes"] if not _is_bot_author(c.get("author") or {}, bot_logins)
-        ]
+        human_comments = [c for c in node["comments"]["nodes"] if not _is_bot_author(c.get("author") or {}, bot_logins)]
         last_comment = human_comments[-1] if human_comments else None
         commit_nodes = node["commits"]["nodes"]
         rollup = (commit_nodes[0]["commit"].get("statusCheckRollup") if commit_nodes else None) or {}
@@ -516,9 +530,7 @@ def review_threads(owner: str, repo: str, number: int) -> list[ReviewThread]:
             comment_page_info = comment_page.get("pageInfo") or {}
             if comment_page_info.get("hasNextPage"):
                 comments += _remaining_thread_comments(t["id"], comment_page_info.get("endCursor"))
-            threads.append(
-                ReviewThread(id=t["id"], is_resolved=bool(t.get("isResolved")), comments=comments)
-            )
+            threads.append(ReviewThread(id=t["id"], is_resolved=bool(t.get("isResolved")), comments=comments))
         page_info = rt.get("pageInfo") or {}
         if not page_info.get("hasNextPage"):
             break
@@ -574,7 +586,7 @@ def reply_to_thread(thread_id: str, body: str) -> str:
             f"body={body}",
         ]
     )
-    comment = (((data.get("data") or {}).get("addPullRequestReviewThreadReply") or {}).get("comment") or {})
+    comment = ((data.get("data") or {}).get("addPullRequestReviewThreadReply") or {}).get("comment") or {}
     return comment.get("url", "")
 
 
@@ -603,7 +615,7 @@ def worktree_root() -> str | None:
 
 
 def remote_name_with_owner() -> str | None:
-    """"owner/repo" parsed from origin's remote URL, entirely locally — no
+    """ "owner/repo" parsed from origin's remote URL, entirely locally — no
     `gh` call, so it stays fast and works even without `gh` installed or
     authenticated. Used to key the local-checkout registry (`zh repos`)
     instead of a `gh repo view` round trip."""
@@ -611,8 +623,7 @@ def remote_name_with_owner() -> str | None:
     if url is None:
         return None
     url = url.rstrip("/")
-    if url.endswith(".git"):
-        url = url[: -len(".git")]
+    url = url.removesuffix(".git")
     parts = re.split(r"[/:]", url)
     if len(parts) < 2 or not parts[-1] or not parts[-2]:
         return None
@@ -623,7 +634,7 @@ _PR_URL_RE = re.compile(r"github\.com[:/]([^/]+)/([^/]+)/pull/\d+")
 
 
 def repo_for_ref(ref: str | None) -> str | None:
-    """"owner/repo" for a PR ref, without needing a `gh` call. `zh pr check`
+    """ "owner/repo" for a PR ref, without needing a `gh` call. `zh pr check`
     is typically passed a full PR URL and run from wherever the agent
     already is, not necessarily a checkout of that repo — so a URL's
     owner/repo is parsed directly from it rather than assumed to be the
@@ -689,8 +700,7 @@ def list_gh_accounts(host: str = "github.com") -> list[GhAccount]:
     except ZithubError:
         return []
     return [
-        GhAccount(login=a.get("login", ""), active=bool(a.get("active")))
-        for a in data.get("hosts", {}).get(host, [])
+        GhAccount(login=a.get("login", ""), active=bool(a.get("active"))) for a in data.get("hosts", {}).get(host, [])
     ]
 
 
@@ -772,7 +782,10 @@ def _repo_owner_account() -> GhAccount | None:
     if owner is None:
         return None
     host = _remote_host() or "github.com"
-    return next((a for a in list_gh_accounts(host) if _login_matches_owner(a.login, owner)), None)
+    return next(
+        (a for a in list_gh_accounts(host) if _login_matches_owner(a.login, owner)),
+        None,
+    )
 
 
 def ensure_gh_account_for_repo() -> str | None:
@@ -880,7 +893,17 @@ def runs_for_commit(sha: str, limit: int = 100) -> list[WorkflowRun]:
     locally since `gh run list --commit` has been seen returning runs from
     other commits on some repos/tokens."""
     data = _run_json(
-        ["gh", "run", "list", "--commit", sha, "--limit", str(limit), "--json", _RUN_LIST_FIELDS]
+        [
+            "gh",
+            "run",
+            "list",
+            "--commit",
+            sha,
+            "--limit",
+            str(limit),
+            "--json",
+            _RUN_LIST_FIELDS,
+        ]
     )
     return [_workflow_run_from_json(r) for r in data if r.get("headSha") == sha]
 
@@ -909,7 +932,17 @@ def runs_for_event(event: str, limit: int = 10) -> list[WorkflowRun]:
     exact release" filter. Callers match the run(s) they mean by createdAt
     against a cutoff captured just before the triggering action."""
     data = _run_json(
-        ["gh", "run", "list", "--event", event, "--limit", str(limit), "--json", _RUN_LIST_FIELDS]
+        [
+            "gh",
+            "run",
+            "list",
+            "--event",
+            event,
+            "--limit",
+            str(limit),
+            "--json",
+            _RUN_LIST_FIELDS,
+        ]
     )
     return [_workflow_run_from_json(r) for r in data]
 
@@ -952,15 +985,14 @@ def create_release(
 # status/ci — read-side reporting ported from wazup, so zh doesn't require it
 # installed alongside for a basic "what's up with this repo" view.
 
+
 def is_linked_worktree() -> bool:
     """True if the current checkout is a linked worktree (`git worktree
     add`), not a repo's main checkout — the two share a common git dir but
     a linked worktree gets its own private one under
     `<common>/worktrees/<name>`, so the two paths differ only there."""
     try:
-        git_dir, common_dir = _run(
-            ["git", "rev-parse", "--git-dir", "--git-common-dir"]
-        ).splitlines()
+        git_dir, common_dir = _run(["git", "rev-parse", "--git-dir", "--git-common-dir"]).splitlines()
     except ZithubError:
         return False
     return os.path.realpath(git_dir) != os.path.realpath(common_dir)
@@ -1065,7 +1097,10 @@ def local_status() -> LocalStatus:
             untracked_count += 1
 
     return LocalStatus(
-        ahead=ahead, behind=behind, changed_files=changed, untracked_count=untracked_count
+        ahead=ahead,
+        behind=behind,
+        changed_files=changed,
+        untracked_count=untracked_count,
     )
 
 
@@ -1137,9 +1172,7 @@ def merged_branch_names(default_ref: str, branches: list[BranchInfo]) -> set[str
             )
         except ZithubError:
             prs = []
-        merged.update(
-            p["headRefName"] for p in prs if pending.get(p["headRefName"]) == p["headRefOid"]
-        )
+        merged.update(p["headRefName"] for p in prs if pending.get(p["headRefName"]) == p["headRefOid"])
     return merged
 
 
@@ -1249,9 +1282,7 @@ def open_prs_by_branch() -> dict[str, BranchPr]:
     except ZithubError:
         return {}
     return {
-        p["headRefName"]: BranchPr(
-            number=p["number"], url=p["url"], state=p["state"], is_draft=p["isDraft"]
-        )
+        p["headRefName"]: BranchPr(number=p["number"], url=p["url"], state=p["state"], is_draft=p["isDraft"])
         for p in data
     }
 
@@ -1310,7 +1341,15 @@ class PullRequestSummary:
 
 def my_open_prs_in_repo() -> list[PullRequestSummary]:
     data = _run_json(
-        ["gh", "pr", "list", "--author", "@me", "--json", "number,title,url,state,isDraft,updatedAt"]
+        [
+            "gh",
+            "pr",
+            "list",
+            "--author",
+            "@me",
+            "--json",
+            "number,title,url,state,isDraft,updatedAt",
+        ]
     )
     return [
         PullRequestSummary(
@@ -1432,7 +1471,15 @@ class IssueSummary:
 
 def my_open_issues_in_repo() -> list[IssueSummary]:
     data = _run_json(
-        ["gh", "issue", "list", "--assignee", "@me", "--json", "number,title,url,state,updatedAt"]
+        [
+            "gh",
+            "issue",
+            "list",
+            "--assignee",
+            "@me",
+            "--json",
+            "number,title,url,state,updatedAt",
+        ]
     )
     return [
         IssueSummary(
@@ -1552,7 +1599,7 @@ def _job_log_tail(run_id: str, job_id: str, lines: int) -> str | None:
     return "\n".join(cleaned[start : error_idx + 1])
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _run_jobs(run_id: str) -> tuple[dict, ...]:
     """Cached: a PR's checks are usually jobs of the same workflow run, so
     without this, listing N failed checks from one run would re-fetch the
@@ -1565,11 +1612,7 @@ def _run_jobs(run_id: str) -> tuple[dict, ...]:
 
 def _find_failed_job(run_id: str) -> dict | None:
     return next(
-        (
-            j
-            for j in _run_jobs(run_id)
-            if (j.get("conclusion") or "").lower() in _JOB_FAILED_CONCLUSIONS
-        ),
+        (j for j in _run_jobs(run_id) if (j.get("conclusion") or "").lower() in _JOB_FAILED_CONCLUSIONS),
         None,
     )
 
@@ -1754,9 +1797,7 @@ def fix_uv_lock_mirror(path: str = "uv.lock") -> str | None:
     text = text.replace(f"{prefix}/simple", "https://pypi.org/simple")
     text = text.replace(f"{prefix}/packages/", "https://files.pythonhosted.org/packages/")
     # some mirrors (e.g. Artifactory) double the packages/ segment in file URLs
-    text = text.replace(
-        "files.pythonhosted.org/packages/packages/", "files.pythonhosted.org/packages/"
-    )
+    text = text.replace("files.pythonhosted.org/packages/packages/", "files.pythonhosted.org/packages/")
 
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)

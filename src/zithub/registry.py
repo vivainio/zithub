@@ -78,16 +78,11 @@ def _compact() -> None:
     """Rewrites the log with exactly one (still-existing) record per path —
     the only place a stale path is dropped from disk, since ordinary writes
     are append-only and never rewrite prior lines."""
-    latest = {
-        path: record
-        for path, record in _latest_by_path(_read_records()).items()
-        if os.path.isdir(path)
-    }
+    latest = {path: record for path, record in _latest_by_path(_read_records()).items() if os.path.isdir(path)}
     path = _registry_path()
     tmp = f"{path}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        for record in latest.values():
-            f.write(json.dumps(record, sort_keys=True) + "\n")
+        f.writelines(json.dumps(record, sort_keys=True) + "\n" for record in latest.values())
     os.replace(tmp, path)
 
 
@@ -96,7 +91,12 @@ def record_seen(path: str, name_with_owner: str, branch: str) -> None:
     rewrite. The log is compacted only once it's grown past
     `_COMPACT_SIZE_BYTES`, so most calls cost a single append plus a stat()."""
     real = os.path.realpath(path)
-    record = {"path": real, "repo": name_with_owner, "branch": branch, "last_seen": time.time()}
+    record = {
+        "path": real,
+        "repo": name_with_owner,
+        "branch": branch,
+        "last_seen": time.time(),
+    }
     _append(record)
     try:
         size = os.path.getsize(_registry_path())
@@ -119,7 +119,12 @@ def list_seen() -> list[RepoEntry]:
     longer exists on disk are silently omitted."""
     latest = _latest_by_path(_read_records())
     entries = [
-        RepoEntry(path=p, repo=e["repo"], branch=e.get("branch", "?"), last_seen=e["last_seen"])
+        RepoEntry(
+            path=p,
+            repo=e["repo"],
+            branch=e.get("branch", "?"),
+            last_seen=e["last_seen"],
+        )
         for p, e in latest.items()
         if os.path.isdir(p)
     ]

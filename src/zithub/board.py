@@ -84,9 +84,7 @@ def _connect(host: str) -> sqlite3.Connection:
     return conn
 
 
-def sync(
-    host: str, prs: list[gh.BoardPr], synced_at: str, login: str | None = None
-) -> None:
+def sync(host: str, prs: list[gh.BoardPr], synced_at: str, login: str | None = None) -> None:
     """Replace the table's contents with exactly `prs` — the scope is
     "your currently-open PRs", so a PR merged/closed since the last sync
     should simply disappear rather than linger as a stale row."""
@@ -169,7 +167,10 @@ def bot_logins(host: str) -> set[str]:
 
 def add_bots(host: str, logins: list[str]) -> None:
     with _connect(host) as conn:
-        conn.executemany("INSERT OR IGNORE INTO bots VALUES (?)", [(login.lower(),) for login in logins])
+        conn.executemany(
+            "INSERT OR IGNORE INTO bots VALUES (?)",
+            [(login.lower(),) for login in logins],
+        )
         _mark_all_for_refetch(conn)
 
 
