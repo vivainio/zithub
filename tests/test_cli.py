@@ -1076,6 +1076,38 @@ def test_release_bare_no_ci_found_proceeds(fake_cli, monkeypatch, capsys):
     assert "PREFLIGHT PASS" in out
 
 
+def test_release_bare_no_commit_run_ignores_cancelled_branch_runs(fake_cli, monkeypatch, capsys):
+    import zithub.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
+    set_preflight_up_to_ci(fake_cli)
+    fake_cli.set(
+        ["gh", "run", "list", "--commit", "abc123", "--limit", "100", "--json", _RUN_LIST_FIELDS],
+        stdout="[]",
+    )
+    fake_cli.set(
+        ["gh", "run", "list", "--branch", "main", "--limit", "5", "--json", _RUN_LIST_FIELDS],
+        stdout=json.dumps(
+            [
+                {
+                    "databaseId": 7,
+                    "name": "Build desktop releases",
+                    "status": "completed",
+                    "conclusion": "cancelled",
+                    "url": "u7",
+                    "headSha": "old",
+                }
+            ]
+        ),
+    )
+    fake_cli.set(["git", "log", "-50", "--oneline", "--no-decorate"], stdout="")
+    rc = run(["release"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "proceed with judgement" in out
+    assert "PREFLIGHT PASS" in out
+
+
 def test_release_bare_ci_failed(fake_cli, monkeypatch, capsys):
     import zithub.cli as cli_mod
 

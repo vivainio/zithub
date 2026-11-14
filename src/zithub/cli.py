@@ -1321,6 +1321,7 @@ _CI_QUICK_INTERVAL_SECONDS = 1
 _CI_POLL_INTERVAL_SECONDS = 20
 _CI_MAX_ATTEMPTS = 30
 _CI_MAX_WAIT_SECONDS = _CI_MAX_ATTEMPTS * _CI_POLL_INTERVAL_SECONDS
+_RELEASE_BLOCKING_CONCLUSIONS = {"failure", "timed_out", "startup_failure"}
 
 
 def _fmt_duration(seconds: float) -> str:
@@ -1373,7 +1374,10 @@ def _wait_for_release_ci(sha: str, branch: str) -> bool:
 
     if not runs:
         latest = gh.latest_runs_for_branch(branch, limit=5)
-        failed = [r for r in latest if r.status == "completed" and r.conclusion != "success"]
+        # Only genuine failures block the release. A cancelled/skipped run on
+        # the branch is a superseded or manually-aborted run, not evidence the
+        # code is broken — and says nothing about this commit.
+        failed = [r for r in latest if r.status == "completed" and r.conclusion in _RELEASE_BLOCKING_CONCLUSIONS]
         if failed:
             print(f"ci     {_red('no run for this commit; latest ' + branch + ' runs failed')}")
             _print_run_failures(failed)
